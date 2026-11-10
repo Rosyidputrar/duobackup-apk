@@ -531,4 +531,264 @@ precise click-by-click instructions in the PR body when a task becomes relevant.
 | S6 | **GitHub Pages.** Settings → Pages → Source: GitHub Actions. | M10 |
 | S7 | **Device checks.** Run the manual checklist in each PR on a real phone and comment the results. | M3 onward |
 
+---
+
+## 6. Milestones
+
+General rules for every milestone:
+
+- **No local SDK or JDK on the owner's phone.** CI is the compiler. Push early and often to
+  the milestone branch so CI catches errors. A draft PR is fine and can be opened from the
+  first push.
+- **Versions:** use the latest *stable* release of each library at implementation time.
+  - Check it against Maven Central (`repo1.maven.org/maven2/<group>/<artifact>/maven-metadata.xml`),
+    Google Maven (`dl.google.com/dl/android/maven2/...`) or the Gradle Plugin Portal.
+  - Never use alpha, beta or RC versions.
+  - Record the chosen versions in `libs.versions.toml` only.
+  - Make sure Kotlin, KSP, AGP, Compose compiler and Hilt versions are mutually compatible
+    (check each project's compatibility table).
+- **Tests** are listed per step. Every listed test is mandatory.
+
+---
+
+### M0 — Repository, build and CI skeleton
+
+**Branch:** `ci/skeleton`
+
+**Goal:** an empty but correctly structured multi-module Android project that CI builds,
+lints and tests on every PR, and that produces a debug APK artifact.
+
+**Steps**
+
+- [ ] **M0.1 Repo hygiene.**
+  - Add `.gitignore`. It must cover:
+    - Android/Gradle (`.gradle/`, `build/`, `local.properties`, `*.keystore`, `*.jks`,
+      `captures/`, `.idea/` except shared run configs)
+    - Node (`node_modules/`, `dist/`)
+    - OS junk
+    - `*.session`
+    - `google-services.json`
+  - Add `.editorconfig`: 4 spaces for Kotlin/KTS, 2 for TS/JSON/YAML/MD, final newline, LF.
+    Add `ktlint_code_style = android_studio`.
+  - Add `.gitattributes`: `* text=auto eol=lf`, and `*.jar binary`.
+- [ ] **M0.2 Gradle project in `app/`.**
+  - Create these files:
+    - `app/settings.gradle.kts`: `rootProject.name = "duobackup"`, include `:app`, `:core`,
+      `:drive`, `:telegram`. Add `pluginManagement` and `dependencyResolutionManagement`
+      with repositories `google()` and `mavenCentral()`. Add `maven("https://jitpack.io")`
+      **restricted with `content { includeGroup("com.github.tdlibx") }`**.
+    - `app/build.gradle.kts`: plugins declared with `apply false`.
+    - `app/gradle.properties`: `org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8`,
+      `android.useAndroidX=true`, `kotlin.code.style=official`,
+      `org.gradle.configuration-cache=true`, `org.gradle.caching=true`.
+    - `app/gradle/libs.versions.toml` covering: AGP, Kotlin, KSP, Compose BOM, Activity
+      Compose, Lifecycle, Navigation Compose, Hilt (+ hilt-work, hilt-navigation-compose),
+      Room, WorkManager, DataStore, Tink, OkHttp (+ mockwebserver),
+      kotlinx-serialization-json, kotlinx-coroutines (+ test), Google Identity /
+      play-services-auth (for `AuthorizationClient`), JUnit 5 (core/drive) and JUnit 4 +
+      Robolectric (android modules), Turbine, Truth or kotlin-test, ktlint plugin, Kover.
+      The TDLib entry is added in M6.
+  - **Gradle wrapper without a local Gradle:**
+    1. Write `gradle/wrapper/gradle-wrapper.properties` pointing at the latest stable
+       Gradle `-bin.zip`, with `distributionSha256Sum` taken from
+       `https://services.gradle.org/distributions/gradle-<v>-bin.zip.sha256`.
+    2. Fetch `gradle-wrapper.jar` from the Gradle GitHub repository at the matching tag
+       (`https://raw.githubusercontent.com/gradle/gradle/v<v>/gradle/wrapper/gradle-wrapper.jar`).
+       Verify it against `https://services.gradle.org/distributions/gradle-<v>-wrapper.jar.sha256`
+       before committing.
+    3. Copy `gradlew` and `gradlew.bat` from the same tag, and keep `gradlew` executable
+       (`git update-index --chmod=+x`).
+    4. CI runs `gradle/actions/wrapper-validation` on every build.
+- [ ] **M0.3 Convention for module config.**
+  - Keep it simple: no `build-logic` included build in v1. Each module's
+    `build.gradle.kts` sets `jvmToolchain(17)` and its plugins directly.
+  - Android modules: `compileSdk`/`targetSdk` = latest stable API level supported by the
+    pinned AGP, and `minSdk = 26`.
+- [ ] **M0.4 Module stubs**, each with one trivial passing test so the test tasks are wired:
+  - `:core`: `kotlin("jvm")` + `kotlinx-serialization`, JUnit 5, Kover. Contains
+    `DestinationId` only.
+  - `:drive`: `kotlin("jvm")`, depends on `:core`.
+  - `:telegram`: `com.android.library`, namespace `io.github.rosyidputrar.duobackup.telegram`,
+    depends on `:core`.
+  - `:app`: `com.android.application`, Compose, Hilt, KSP.
+    - `applicationId = "io.github.rosyidputrar.duobackup"`, `versionCode = 1`,
+      `versionName = "0.1.0"`.
+    - `debug` build type uses `applicationIdSuffix = ".debug"`.
+    - `@HiltAndroidApp class DuoBackupApp`, plus `MainActivity` showing a Material 3
+      scaffold with the text "DuoBackup".
+- [ ] **M0.5 Static checks.**
+  - Apply the ktlint Gradle plugin to all modules.
+  - Android lint: `abortOnError = true`, `checkDependencies = true`, no baseline file.
+  - Kover on `:core` and `:drive` with a verify rule of **≥ 80 % line coverage** (enforced
+    from M1; set the rule now with `minBound(0)` and raise it in M1.6).
+- [ ] **M0.6 `.github/workflows/android.yml`.**
+  - Triggers: `pull_request` and `push` to `main`, with paths `app/**` and
+    `.github/workflows/android.yml`; also `workflow_dispatch`.
+  - `concurrency: android-${{ github.ref }}` with `cancel-in-progress: true`.
+  - Permissions: `contents: read`.
+  - Job `build` on `ubuntu-latest`, `defaults.run.working-directory: app`, steps:
+    1. checkout
+    2. `actions/setup-java` (temurin, 17)
+    3. `gradle/actions/setup-gradle` (with caching)
+    4. `gradle/actions/wrapper-validation`
+    5. `./gradlew ktlintCheck`
+    6. `./gradlew :core:test :drive:test :core:koverVerify :drive:koverVerify`
+    7. `./gradlew testDebugUnitTest`
+    8. `./gradlew lintDebug`
+    9. `./gradlew assembleDebug`
+    10. upload `app/app/build/outputs/apk/debug/*.apk` as artifact `duobackup-debug-apk`
+        (retention 14 days)
+    11. on failure: upload `**/build/reports/**` as artifact `reports`.
+  - Pin actions to major versions (`@v4`, etc.).
+- [ ] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
+  `/app`) and `github-actions` (directory `/`), weekly, grouped minor/patch updates.
+- [ ] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
+  the debug APK from the Actions artifacts, and a link to `plan.md`.
+
+**Acceptance**
+
+- The PR's `android` workflow is green.
+- The artifact `duobackup-debug-apk` exists and installs on a phone (S7).
+- The app opens and shows "DuoBackup".
+- The `gradlew` file mode is 100755 in git (`git ls-files -s app/gradlew`).
+
+---
+
+### M1 — Core library: formats, math, codecs
+
+**Branch:** `feat/core-formats`. Pure JVM, so it is fully testable in CI.
+
+**Goal:** every format from §4, plus the part math, hashing, backoff and path utilities,
+implemented and locked by golden tests. M1 has no I/O except streams and files passed in.
+
+Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `transport`,
+`format`, `crypto`, `engine` (filled in M4), `util`.
+
+**Steps**
+
+- [ ] **M1.1 Models and interfaces** (§2.2):
+  - `DestinationId`, `BackupTransport`, `TransportException`, `RemoteLocation`
+    (a sealed class with `Telegram(chatId, messageId, remoteFileId, remoteUniqueId)` and
+    `Drive(fileId)`), `PartUpload(file, oid, partIndex, partSha256OrMac, storedSize, caption
+    material)`, `PartPresence`, `IndexRef`, `IndexMeta`, `PrepareResult`,
+    `DestinationLimits(maxFileBytes, captionMax, quotaFreeBytes?, isPremium?)`.
+  - `Clock`, `ScratchSpace`, `SecureRandomSource` (injectable so tests are deterministic).
+- [ ] **M1.2 `Limits.kt` and `PartSizing`.**
+  - Fallback constants, used only when detection fails:
+    - `TG_FALLBACK_MAX_PARTS = 4000`
+    - `TG_UPLOAD_PART_BYTES = 512 * 1024`, which gives `2_097_152_000` bytes
+    - `TG_FALLBACK_CAPTION_MAX = 1024`
+    - `DRIVE_MAX_FILE_BYTES = 5 TB`
+    - `TARGET_PART_SIZE = 512 MiB`
+    - `FRAME = 1 MiB`
+  - Functions:
+    - `PartSizing.storedSize(plain: Long, encrypted: Boolean)` (§4.6 formula)
+    - `PartSizing.maxPlainPartSize(limitBytes: Long, encrypted: Boolean)` (largest multiple
+      of 1 MiB fitting `limitBytes - 1 MiB`)
+    - `PartSizing.choose(limits: List<DestinationLimits>, encrypted)`
+    - `PartSizing.layout(size, partSize): List<PartSpan(index, offset, length)>`
+  - Tests:
+    - size 0 gives 0 parts
+    - size 1
+    - exactly one part
+    - one part + 1 byte
+    - a 20 GiB file with 512 MiB parts gives 40 parts
+    - stored size with and without encryption at 0, 1, 1 MiB, 1 MiB + 1, 512 MiB
+    - `choose` with a free-tier limit gives 512 MiB
+    - `choose` with a hypothetical 100 MiB limit gives 99 MiB plain unencrypted, and the
+      correct encrypted value
+    - the stored size of the chosen part never exceeds the limit (property test over random
+      limits)
+- [ ] **M1.3 `Hasher`.**
+  - `hash(input: InputStream, partSize: Long): HashResult(sha256, size, partHashes: List<String>)`.
+  - Single pass with a 1 MiB buffer and two `MessageDigest` instances (whole + current part).
+  - Supports cancellation by checking `coroutineContext.ensureActive()` per buffer when
+    called from the suspend variant.
+  - Tests:
+    - empty input
+    - known vectors (`"abc"` gives the RFC 6234 value)
+    - part hashes equal the hashes of the sliced ranges
+    - sizes not aligned to the buffer
+    - the concatenated part ranges cover the input exactly
+- [ ] **M1.4 Crypto** (`crypto` package, JCA only, no Tink in `:core`):
+  - `Hkdf.sha256(ikm, salt, info, len)` with RFC 5869 test cases 1–3 as tests.
+  - `KeyMaterial(masterKey)` exposing `contentKey`, `metaKey`, `idKey`, `keyId`.
+  - `Oid.of(sha256Hex, idKey?)`, with tests for both modes.
+  - `Dbe1.newWriter(out: OutputStream, key, random): OutputStream`, which buffers to 1 MiB
+    frames and writes the final frame on `close()`.
+  - `Dbe1.newReader(input: InputStream, key): InputStream`, which verifies each frame
+    before releasing its bytes.
+  - Tests:
+    - round-trip at 0, 1, 1 MiB − 1, 1 MiB, 1 MiB + 1, and 5 MiB + 7 bytes
+    - stored length equals `PartSizing.storedSize`
+    - tamper detection, each case giving a typed `CryptoException`:
+      - flip one byte in a header, ciphertext or tag
+      - swap two frames
+      - truncate the last frame
+      - drop the final frame
+      - append an extra frame after the final one
+      - final-flag cleared
+      - length field > 1 MiB
+    - wrong key gives an auth failure
+    - `seekOffset(x)` math
+  - `KeyFile.create(masterKey, passphrase, random, iterations = 600_000)` /
+    `KeyFile.unlock(json, passphrase)`.
+    - Tests: round-trip, wrong passphrase gives `WrongPassphrase`, tampered `ct` gives an
+      auth failure, and the JSON schema matches the golden file.
+    - Use `iterations = 1000` in tests through a parameter; the default stays 600k.
+  - `CaptionCipher` (AES-256-GCM, 12-byte nonce, fixed AAD), with round-trip and tamper tests.
+- [ ] **M1.5 Format codecs** (`format` package, kotlinx.serialization, explicit
+  `@SerialName` for every short key):
+  - `CaptionCodec.encode(meta: PartCaption, budget: Int, cipher: CaptionCipher?)` and
+    `decode(text)`. Rules from §4.3: the only allowed shortening is the tail-preserving
+    shortening of `p` with `pt = 1`; anything else throws `CaptionTooLong`.
+    - Tests:
+      - plain and encrypted round-trip
+      - budget truncation keeps the file name
+      - budgets of 1024 and 2048
+      - a non-ASCII path (budget measured in UTF-16 code units, as Telegram counts)
+      - a non-`db1:`/`dbe1:` caption gives `null` (foreign message), not an exception
+      - unknown `v` gives `UnsupportedVersion`
+  - `IndexSnapshotCodec.write(snapshot, out, cipher?)` / `read(input, cipher?)` with gzip.
+    - Unknown JSON fields are ignored (`ignoreUnknownKeys = true`); an unknown `v` major
+      throws.
+    - `IndexSnapshot.merge(a, b)` (§4.5 rule).
+    - Tests: round-trip, merge unions part locations, newest base wins, and the encrypted
+      round-trip.
+  - `DriveProps.part(...)`, `DriveProps.index(...)` and friends. Each returns
+    `Map<String, String>` and asserts that every key+value pair is ≤ 120 UTF-8 bytes. Tests
+    cover the worst case: a 64-hex oid, a large part index, and a 64-hex ph.
+- [ ] **M1.6 Golden vectors.**
+  - `core/src/test/resources/golden/` holds:
+    - `dbe1-*.bin` (fixed key and salt) with their `.plain` inputs
+    - `keyfile-v1.json` (fixed passphrase "correct horse battery staple", fixed salt and
+      nonce, iterations 1000)
+    - `caption-plain.txt`
+    - `caption-enc.txt`
+    - `index-v1.json.gz` and `index-v1-enc.json.gz.dbe`
+  - Tests decode each one and re-encode it with the same injected randomness, then assert
+    byte equality.
+  - A `GoldenGenerator` test (`@Disabled` by default) regenerates them, and its use is
+    documented in a comment. The same files are consumed by the web tests in M10, which keeps
+    the two implementations interoperable.
+  - Raise Kover's bound to 80 %.
+- [ ] **M1.7 `Backoff` and retry policy.**
+  - `Backoff(base = 2 s, factor = 2.0, cap = 1 h, jitter = FULL)` with
+    `nextDelay(attempt, random)`.
+  - `RetryPolicy.classify(TransportException)` gives RETRY_AFTER(ms), BACKOFF, PAUSE_DEST or
+    FAIL_ITEM.
+  - Tests: monotone caps, jitter within bounds, and classification for each exception.
+- [ ] **M1.8 Path utilities.**
+  - `RelPath.normalize` (rejects `..`, absolute paths and empty segments; normalises
+    separators).
+  - `ExcludeMatcher(globs)` supports `**`, `*` and `?`, matching on relative paths.
+    Tests cover the default exclude set (§M2.5).
+  - `MimeGuess.fromName` (extension table, small).
+
+**Acceptance**
+
+- CI is green, and Kover on `:core` is at least 80 %.
+- Every format in §4 has a golden test.
+- No Android imports appear in `:core` (CI step: `! grep -r "import android" core/src`).
+
 <!-- plan:continue -->
