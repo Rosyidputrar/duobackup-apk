@@ -395,7 +395,7 @@ a clear error. Golden test vectors for every format live in `core/src/test/resou
 - **Index message:**
   - Document `duobackup-index-<yyyyMMdd'T'HHmmss'Z'>.json.gz`, or `….json.gz.dbe` when
     encrypted.
-  - Caption `#duobackup-index v1 <epochMs>`.
+  - Caption `#duobackup-index v1 <epochMs>`, followed by ` kid=<keyId>` when encrypted.
   - Discovery: search the channel's messages for `#duobackup-index` (document filter) and
     take the newest.
 - **Key message (M8):**
@@ -414,7 +414,8 @@ DuoBackup/                      folder, appProperties {db: "root", v: "1", insta
     <oid16>.<pi>.dbp            appProperties {db: "part", v: "1", oid: <oid 64 hex>,
                                                pi: "<n>", ph: <part sha256 or HMAC when enc>}
   index/                        folder, appProperties {db: "index-dir"}
-    duobackup-index-<ts>.json.gz[.dbe]   appProperties {db: "index", v: "1", ts: "<epochMs>"}
+    duobackup-index-<ts>.json.gz[.dbe]   appProperties {db: "index", v: "1", ts: "<epochMs>",
+                                                    kid: <keyId, only when encrypted>}
   key/                          folder, appProperties {db: "key-dir"}
     duobackup-key.json          appProperties {db: "key", v: "1", kid: <keyId>}
 ```
@@ -1512,4 +1513,391 @@ either destination, and redundancy can be inspected and repaired.
   Doing it again from Telegram only gives the same tree.
 - Deleting the Drive index files and running "Rebuild from Telegram" recovers all contents.
 
-<!-- plan:continue -->
+---
+
+### M8 — Optional encryption
+
+**Branch:** `feat/encryption`.
+
+**Goal:** opt-in encryption (off by default) for content, captions, Drive properties and
+indexes, using the formats already built and tested in M1.6. It has safe key backup and
+honest UX.
+
+**Steps**
+
+- [ ] **M8.1 `KeyManager`** in `:app`.
+  - `enable(passphrase)`:
+    1. Generate `masterKey` (`SecureRandom`).
+    2. Build `KeyFile` (600k iterations).
+    3. **Upload the key file to every enabled destination** (`putKeyFile`) and read each one
+       back to verify it unlocks.
+    4. Only then store the wrapped `masterKey` in `SecretStore` and set
+       `encryption_enabled = true`.
+
+    If any step fails, roll back and leave encryption off.
+  - `unlock(passphrase)` (new device) fetches the key file from any destination, unlocks it
+    and stores the key.
+  - `changePassphrase(old, new)` writes a new key file (same `keyId`) to all destinations.
+    The old key files are kept for 7 days, then deleted.
+  - `disable()` sets the flag off for future contents only. The key is kept, because existing
+    encrypted data still needs it.
+  - Implement `putKeyFile`/`getKeyFile` on both transports (§4.3, §4.4). This is when the M3
+    stubs get replaced.
+  - Tests:
+    - enable fails if one destination's key upload fails, leaving state unchanged
+    - unlock with the wrong passphrase
+    - changing the passphrase keeps the data readable
+    - disable leaves old contents restorable
+- [ ] **M8.2 Engine integration.**
+  - **PartProducer:** when `contents.encrypted = 1`, the scratch file gets the DBE1 stream of
+    the part plaintext (contentKey, fresh salt per part).
+    - The plaintext hash is checked while reading.
+    - The stored size is asserted to equal `PartSizing.storedSize`.
+  - **RestoreEngine:** `Dbe1.newReader` sits between the download and the hash check. Any
+    `CryptoException` counts as `PART_CORRUPT`, which triggers the fallback.
+  - **Captions:** `dbe1:` via `CaptionCipher(metaKey)`. The `o` key carries the HMAC oid.
+  - **Drive `ph`:** HMAC, not the plaintext hash.
+  - **Indexes:** `.json.gz.dbe` (metaKey). The whole file is encrypted, so a reader learns
+    which key it needs from the index's Drive `appProperties.kid` or Telegram caption
+    `kid=<keyId>` (§4.3, §4.4), not from the JSON.
+  - **Dedup and planning:** a content that already exists as plain is reused as it is.
+    Encryption is a property of the content, decided once. Settings shows "N files stored
+    without encryption (backed up before encryption was enabled)". Re-encrypting is Deferred
+    (§9).
+  - Tests: the full engine round-trip with encryption on both FakeTransports, and mixed plain
+    and encrypted contents in one snapshot. Tampered ciphertext on one destination makes
+    restore succeed through the other.
+- [ ] **M8.3 Locked state.**
+  - If `encryption_enabled` is set but the key cannot be loaded (for example, the Keystore
+    was wiped after a restore from a device backup), backups pause with
+    `KEY_LOCKED`, the app asks for the passphrase, and restores of encrypted contents are
+    blocked with the same prompt.
+  - Exclude the DataStore, the Tink keyset and the TDLib dirs from Android Auto Backup and
+    device-transfer (`android:dataExtractionRules`, `android:fullBackupContent`). Keystore keys
+    do not migrate, so the wrapped blobs must not either.
+- [ ] **M8.4 Recovery code.** On enable, show a **recovery code**: `masterKey` as Crockford
+  Base32 in groups of 4, plus a 4-character checksum.
+  - The user must confirm they saved it by retyping 2 random groups.
+  - Restoring with the recovery code alone, without the passphrase, is supported.
+  - The UI states plainly: "Without the passphrase or the recovery code, nobody — including
+    you — can read the encrypted backup."
+- [ ] **M8.5 Settings UI.** Encryption toggle, change passphrase, show recovery code (requires
+  the passphrase again), and a status row with `keyId`. The passphrase strength meter requires
+  at least 12 characters and warns on common patterns.
+
+**Acceptance**
+
+- CI is green.
+- On a device (S7), with encryption enabled:
+  - Back up a folder.
+  - In Telegram, captions show only `dbe1:…`.
+  - In Drive, file names show only `<hex>.<n>.dbp` and properties hold no plaintext hashes.
+  - Restore verifies.
+  - Clearing app data and using "Connect existing" with the passphrase restores. Doing it with
+    the recovery code also works.
+
+---
+
+### M9 — Retention, garbage collection, audit
+
+**Branch:** `feat/retention`.
+
+**Goal:** destinations do not grow forever. Old versions and deleted files expire, and
+unreferenced remote data is removed safely. Missing remote data is detected and re-uploaded.
+
+**Steps**
+
+- [ ] **M9.1 Expiry rules** (`RetentionEngine`, pure `:core`, with `retention_days = R`):
+  - The current version of an existing file never expires.
+  - A superseded version expires when `superseded_at + R days < now`. This covers
+    overwritten versions and files deleted on the device.
+  - A file with `hold = 1` never expires (M7.4).
+  - Snapshots older than `R` days are deleted, except the newest one. Snapshots never keep
+    content alive past these rules, so the rules are fully defined by `file_versions`.
+  - Expired versions are deleted from `file_versions`. A `files` row with no versions left and
+    state `DELETED` is deleted.
+  - Tests: a table-driven test over versions and times, the hold case, and the newest
+    snapshot being kept.
+- [ ] **M9.2 Garbage collection.**
+  - A content is garbage when no `file_versions` row references it.
+  - It moves to `DELETING`, each location gets `deletePart` (NotFound counts as success), its
+    location rows are removed, and then it becomes `GONE` (row deleted).
+  - The process is resumable at any step.
+  - **Safety rails:**
+    - GC never runs in the same session as a catalog import (M7.4/M7.5) or within 24 h of one.
+    - GC is skipped if the last scan of any root was incomplete.
+    - If one run would delete more than 20 % of live contents or more than 50 GB, it pauses
+      and asks the user to confirm in the app.
+  - Telegram deletions go through the pacer, at most 100 messages per `deleteMessages` call.
+  - Tests: GC after an expiry, resume after a crash mid-GC, safety-rail triggers, and a
+    content shared by two files is not deleted while one file still references it.
+- [ ] **M9.3 Orphan sweep** (remote objects not in the catalog, such as parts uploaded right
+  before a crash, before their location was recorded).
+  - **Drive:** list `data/` with `appProperties db = part`. Any file whose id is not in
+    `part_locations` and whose `createdTime` is older than 24 h is deleted.
+  - **Telegram:** page through the channel's documents. Any message with a `db1:`/`dbe1:`
+    caption whose id is not in `part_locations`, and that is older than 24 h, is deleted.
+  - **Never** touch objects without DuoBackup markers.
+  - The same safety rails as GC apply. The sweep runs at most once a week.
+  - Tests with fakes: orphans deleted, young orphans kept, foreign objects kept.
+- [ ] **M9.4 Audit.**
+  - A weekly light audit runs `checkPart` on a 2 % sample of locations (at least 20,
+    rate-limited).
+  - A manual full audit is available from Settings.
+  - A `MISSING` result sets `part_locations.missing = 1` and removes the row from consideration
+    as a location. The part becomes pending again for that destination, and the uploader
+    re-uploads it from the local file or through the M7.6 repair path.
+  - The Home screen shows the last audit result.
+- [ ] **M9.5 Scheduling.**
+  - Retention, GC, sweep and audit run at the end of a backup session in the remaining
+    budget, each at most once per period.
+  - All of them are visible in the activity log with counts of deleted versions, contents and
+    bytes freed per destination.
+  - Settings offers retention days (7/30/90/365/forever) and snapshots to keep.
+
+**Acceptance**
+
+- CI is green.
+- On a device (S7), with `retention_days = 7`:
+  - Modify a file three times.
+  - Advance time through a debug-only clock override in the developer settings of the debug
+    build.
+  - Run a backup: old versions expire, their parts disappear from Drive and Telegram, and the
+    current version is still restorable.
+- A manually deleted Telegram part message is detected by the full audit and re-uploaded.
+
+---
+
+### M10 — Web panel
+
+**Branch:** `feat/web-panel`. **Needs:** S5 and S6. Work can start in parallel with M8 once
+M7 is merged, because the format is stable after M1 and M7.
+
+**Goal:** a static, read-only SPA on GitHub Pages that signs in with Google, reads the newest
+index from Drive, and lets the user browse files, see redundancy and quota, and download
+individual files from Drive in the browser with full verification.
+
+**Step 0 — verify before building.** Confirm that a **Web** OAuth client in the same Cloud
+project, with scope `drive.file`, can list and read files created by the Android client.
+`drive.file` access is granted per Cloud project. Do the check with a throwaway HTML page and
+record the result in the Decision Log. If it fails, stop and raise it with the owner. The
+fallback options are a narrow `drive.readonly` scope for the web panel only, or the Google
+Picker API.
+
+**Steps**
+
+- [ ] **M10.1 Scaffold `web/`.**
+  - Vite + React + TypeScript (strict), ESLint (typescript-eslint, react-hooks), Prettier and
+    Vitest.
+  - `base: "/duobackup-apk/"`.
+  - No UI framework is required. Use a small hand-written CSS with custom properties, dark and
+    light themes, and responsive layout (the phone is the primary viewer).
+- [ ] **M10.2 Auth.**
+  - Use Google Identity Services' **token model** (`google.accounts.oauth2.initTokenClient`,
+    scope `drive.file`).
+    - The token lives in memory only, with silent re-request on expiry.
+    - There is no client secret and no backend, which fits a static site. A refresh token is
+      not needed for an interactive panel.
+  - The client id comes from `import.meta.env.VITE_GOOGLE_CLIENT_ID`, injected at build time.
+  - Set a CSP meta tag allowing only `accounts.google.com` and `www.googleapis.com`.
+- [ ] **M10.3 Data layer** (`web/src/lib/`).
+  - `drive.ts`: `about`, `listFiles` with paging, `getMedia` (with a `Range` option), using
+    `fetch` with the bearer token. Errors are mapped like in M3.2.
+  - `layout.ts`: finds the DuoBackup root, `index/` and `key/` folders by `appProperties`.
+  - `index.ts`:
+    1. Pick the newest index.
+    2. Download it.
+    3. If it is `.dbe`, ask for the passphrase.
+    4. Gunzip with `DecompressionStream('gzip')`.
+    5. Parse and validate `format`/`v`.
+  - `crypto.ts` (WebCrypto):
+    - PBKDF2-SHA256 unwrap of the key file
+    - HKDF subkeys
+    - DBE1 stream decryptor (frame by frame, rejecting the same tampering as the Kotlin
+      reader)
+    - `CaptionCipher` decryption (not needed for Drive, but kept for parity tests)
+  - The derived key is held in memory only and cleared on sign-out or tab close.
+  - **Interop tests:** Vitest reads `../app/core/src/test/resources/golden/*` and must decode
+    every golden vector exactly like the Kotlin tests. This is the contract that keeps the APK
+    and the web panel compatible.
+- [ ] **M10.4 Screens.**
+  - **Sign in**
+  - **Overview:** device, last backup time and result, pending parts, Drive quota bar, counts by
+    redundancy (Drive / Telegram / both, computed from the parts' `tg`/`gd` entries)
+  - **Browse:**
+    - a folder tree with virtualized lists (handles 100k+ entries)
+    - search by name
+    - sort by name, size or date
+    - file detail with size, mtime, hash, parts and locations
+  - **Snapshots:** list of indexes with dates, with the option to open an older one
+- [ ] **M10.5 Download from Drive.**
+  - For a file whose parts are all on Drive:
+    1. Download the parts in order.
+    2. Decrypt if encrypted.
+    3. Verify each part's SHA-256 (`crypto.subtle.digest` per part; parts are ≤ 512 MiB, so
+       use streaming through a WASM-free incremental SHA-256 such as `@noble/hashes`).
+    4. Verify the whole-file SHA-256 incrementally.
+    5. Write through `showSaveFilePicker` when it is available, otherwise as a Blob for files
+       ≤ 1 GB with a clear message above that.
+  - Any verification failure aborts and deletes the partial output where possible. The UI
+    never offers an unverified file.
+  - Telegram-only files show "Stored on Telegram only — restore it from the app", because
+    MTProto is not used in the browser.
+- [ ] **M10.6 `.github/workflows/web.yml`.**
+  - Triggers: PR and push on `web/**`, plus `app/core/src/test/resources/golden/**` so
+    interop is re-checked when the vectors change.
+  - `setup-node` (LTS, npm cache), then `npm ci`, `npm run lint`, `npm test` and
+    `npm run build`.
+  - On push to `main`, deploy with `actions/upload-pages-artifact` and `actions/deploy-pages`
+    (`permissions: pages: write, id-token: write`, environment `github-pages`).
+
+**Acceptance**
+
+- CI is green, and the interop tests pass on every golden vector.
+- The site is live at `https://rosyidputrar.github.io/duobackup-apk/`.
+- On a phone browser, sign in, see the same file count as the app, and download one plain and
+  one encrypted multi-part file. Their hashes match the originals.
+- A tampered part (edited in Drive by the owner for the test) is rejected.
+
+---
+
+### M11 — Hardening and v1.0 release
+
+**Branch:** `chore/release-v1`.
+
+**Steps**
+
+- [ ] **M11.1 Reliability UX.**
+  - Offer `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, explained and not forced.
+  - Detect a known aggressive OEM (`Build.MANUFACTURER`) and link to dontkillmyapp.com
+    instructions.
+  - A notification appears when no successful backup has happened for 3 days while backups
+    are enabled.
+- [ ] **M11.2 Diagnostics.**
+  - Keep a local rotating log (5 × 1 MB) with redaction. Tokens, api_hash, phone numbers and
+    passphrases are never logged, and paths are hashed at info level.
+  - Settings → "Export diagnostics" shares a zip with the logs, the `runs` table and the
+    settings without secrets.
+  - A unit test asserts that the redaction patterns catch the known secret shapes.
+- [ ] **M11.3 Scale test.**
+  - A debug-only tool generates 50,000 synthetic files (mixed sizes up to 1.5 GB, sparse) in a
+    test folder.
+  - Measure scan time, hash throughput, catalog size and snapshot size. Write the results to
+    the PR body.
+  - Targets on a mid-range phone:
+    - incremental scan of 50k unchanged files in under 60 s
+    - snapshot for 50k files in under 10 MB gzipped
+    - Browse stays smooth
+- [ ] **M11.4 Failure drills** (documented in `docs/drills.md` with results):
+  - airplane mode mid-upload and mid-restore
+  - force-stop
+  - reboot mid-session
+  - Drive quota full (use a nearly full test account, or simulate it in a debug build)
+  - a long Telegram flood-wait
+  - an expired or revoked Google grant
+  - Telegram session terminated from another device
+  - storage full during restore
+  - a corrupted part on one destination
+  - lost local DB, then recovery through Connect existing
+- [ ] **M11.5 Polish.** App icon (adaptive), accessibility (content descriptions, touch
+  targets, font scaling), empty and error states for every screen, and an Indonesian
+  translation `values-in/strings.xml` (optional, if the owner wants it).
+- [ ] **M11.6 Release.**
+  - `versionCode` comes from `git rev-list --count HEAD`, and `versionName` from the tag.
+  - The workflow `release.yml` on tag `v*`:
+    1. Builds the signed release APKs (ABI splits plus universal).
+    2. Creates a GitHub Release with the APKs and SHA-256 sums attached, plus the notes from
+       `CHANGELOG.md`.
+  - Write `CHANGELOG.md` (Keep a Changelog format) and README sections for install, setup
+    (S2–S5 for anyone self-building), privacy (what leaves the phone, what is encrypted) and
+    limitations.
+  - The owner creates the tag `v1.0.0` after merging. The agent never tags without being asked.
+
+**Acceptance:** every drill passes, the release is published by the workflow, and a fresh
+install from the release APK can back up and restore on both destinations.
+
+---
+
+## 7. Risks and mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Telegram limits or ToS on using an account as bulk storage; account restriction | Telegram destination stops | Pacer, no parallel clients, conservative spacing, honest UX; Drive remains as an independent copy; never the only copy by default (onboarding recommends both) |
+| Free-account upload throttling after tens of GB | The first full backup takes days | Expected and designed for: budgets, resume, ETA shown, no special casing |
+| `com.github.tdlibx:td` is a third-party JitPack build of a native library | Supply chain, stale version | Pin the exact version, restrict the JitPack repo to that group, verify the AAR checksum in the Decision Log; fallback is building TDLib from source in a CI job (documented, Deferred) |
+| TDLib API changes between versions | Compile breaks on upgrade | All TDLib use goes through `TdGateway`; Dependabot PRs for TDLib are reviewed by hand |
+| Android 15+ `dataSync` time limits and OEM background killing | Runs cut short | 45-min budgets, follow-up runs, resume at part granularity, battery-optimization prompt |
+| OAuth app left in "Testing" mode | Drive grants expire every 7 days | S2 says publish to production; the app detects `AuthRequired` and notifies |
+| `drive.file` not shared between the Android and web clients | Web panel cannot see files | M10 step 0 verifies first; fallbacks are documented |
+| User loses passphrase and recovery code | Encrypted backup unreadable | Encryption is opt-in; a forced recovery-code confirmation step; explicit wording |
+| Shared Google storage pool fills up (Gmail/Photos) | Drive uploads stop | Quota detected each run; pause plus notification; retention settings |
+| Catalog corruption or loss | Restore blocked | Snapshots on two destinations, caption rebuild (M7.5), Room exported schemas and migration tests |
+| Public repository | Secrets could leak | Secrets only in GitHub Actions secrets; `.gitignore`; no credentials in code (`CLAUDE.md` invariant 8) |
+
+---
+
+## 8. Testing strategy
+
+- **`:core` (JVM, JUnit 5)** is where most of the logic and most of the tests live.
+  - Formats have golden vectors.
+  - The engine has fakes and virtual time (`kotlinx-coroutines-test`).
+  - Property-style tests cover chunk math and crash/resume (seeded random; the seed is printed
+    on failure).
+  - Coverage is at least 80 %, enforced by Kover.
+- **`:drive` (JVM)** is tested with MockWebServer and scripted, recorded responses, including
+  error bodies. Coverage is at least 80 %.
+- **`:telegram`** is tested with `FakeTdGateway`. The `TdApi` classes are plain Java and need
+  no native code. Real TDLib is exercised only on device (S7).
+- **`:app`** has Robolectric tests for Room DAOs and migrations, `SecretStore`, WorkManager
+  scheduling and ViewModels (with Turbine). No instrumented-test CI is required for v1.
+- **Web** has Vitest unit tests for the data layer and crypto, plus interop against the Kotlin
+  golden vectors.
+- **On device**, each PR carries an explicit manual checklist (from the milestone acceptance).
+  The owner reports results in a PR comment, and the agent addresses failures in the same PR.
+- **Never** delete, skip or weaken a test to get green CI. A test that is wrong is fixed with
+  an explanation in the commit message.
+
+---
+
+## 9. Deferred (not in v1)
+
+| Item | Reason |
+|---|---|
+| Root / other apps' data | Out of scope by owner decision |
+| Removable SD card / USB volumes | Volume identity and permission edge cases; the model already has a `volume` column |
+| Content-defined chunking | Fixed 512 MiB parts plus whole-file dedup cover phone data (mostly immutable media); revisit for large mutable files |
+| Re-encrypting existing plain contents | Costly re-upload; offer once encryption has shipped |
+| Restore triggered from the web panel | Needs a phone ↔ web channel; web downloads directly instead |
+| Bot API transport | 20 MB download limit makes it unfit (`info.md` §2.2) |
+| Multiple Telegram accounts or channels, multiple devices writing one backup | Concurrency and merge complexity; the `install` id in formats keeps the door open |
+| Building TDLib from source in CI | Only if the JitPack artifact becomes unavailable or stale |
+| Compression | Media dominates phone storage and is already compressed |
+| Play Store distribution | `MANAGE_EXTERNAL_STORAGE` policy; sideload or GitHub Releases only |
+
+---
+
+## 10. Decision Log
+
+Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
+
+- **D1 (2026-11-10, plan):** Drive is implemented before Telegram — it is testable end to end
+  in CI with MockWebServer, which proves the engine before TDLib complexity arrives.
+- **D2 (2026-11-10, plan):** DuoBackup uses its own remote formats (`db1:`/`dbe1:` captions,
+  `DBE1` stream, `duobackup-index` v1) instead of copying TeleDrive's `td1:`/`TDE1` — explicit
+  versioning and per-stream keys (HKDF with a random salt) avoid nonce reuse across parts.
+- **D3 (2026-11-10, plan):** the passphrase KDF is PBKDF2-HMAC-SHA256 with 600k iterations
+  rather than scrypt — it is natively available in WebCrypto for the web panel; the key file
+  format allows a future KDF upgrade through `kdf.alg`.
+- **D4 (2026-11-10, plan):** Android Drive auth uses Google Identity Services
+  `AuthorizationClient` instead of AppAuth — there is no client secret or redirect URI on the
+  device, and silent token refresh works in workers.
+- **D5 (2026-11-10, plan):** the web panel uses the GIS token model (no refresh token, no
+  backend) — a static site cannot keep a client secret, and an interactive panel does not need
+  offline access.
+- **D6 (2026-11-10, plan):** the catalog is content-addressed (`contents` keyed by plaintext
+  SHA-256, `file_versions` for history) rather than the per-file `file_parts` table in
+  `info.md` §8.1 — it gives deduplication, versioning and retention-driven GC with one model.
+- **D7 (2026-11-10, plan):** Telegram per-file and caption limits are detected at runtime
+  (`is_premium`, `getApplicationConfig` → `upload_max_fileparts_*`,
+  `message_caption_length_max`), and so is the Drive quota (`about.storageQuota`) — accounts
+  differ and change over time; constants are fallbacks only.
