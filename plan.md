@@ -668,7 +668,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
 
 **Steps**
 
-- [ ] **M1.1 Models and interfaces** (§2.2):
+- [x] **M1.1 Models and interfaces** (§2.2):
   - `DestinationId`, `BackupTransport`, `TransportException`, `RemoteLocation`
     (a sealed class with `Telegram(chatId, messageId, remoteFileId, remoteUniqueId)` and
     `Drive(fileId)`), `PartUpload(file, oid, partIndex, partSha256OrMac, storedSize, caption
