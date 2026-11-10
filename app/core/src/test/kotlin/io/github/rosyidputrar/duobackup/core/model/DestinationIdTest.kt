@@ -1,4 +1,4 @@
-package io.github.rosyidputrar.duobackup.core
+package io.github.rosyidputrar.duobackup.core.model
 
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test

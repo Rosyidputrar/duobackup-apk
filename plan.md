@@ -675,7 +675,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
     material)`, `PartPresence`, `IndexRef`, `IndexMeta`, `PrepareResult`,
     `DestinationLimits(maxFileBytes, captionMax, quotaFreeBytes?, isPremium?)`.
   - `Clock`, `ScratchSpace`, `SecureRandomSource` (injectable so tests are deterministic).
-- [ ] **M1.2 `Limits.kt` and `PartSizing`.**
+- [x] **M1.2 `Limits.kt` and `PartSizing`.**
   - Fallback constants, used only when detection fails:
     - `TG_FALLBACK_MAX_PARTS = 4000`
     - `TG_UPLOAD_PART_BYTES = 512 * 1024`, which gives `2_097_152_000` bytes
@@ -701,7 +701,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
       correct encrypted value
     - the stored size of the chosen part never exceeds the limit (property test over random
       limits)
-- [ ] **M1.3 `Hasher`.**
+- [x] **M1.3 `Hasher`.**
   - `hash(input: InputStream, partSize: Long): HashResult(sha256, size, partHashes: List<String>)`.
   - Single pass with a 1 MiB buffer and two `MessageDigest` instances (whole + current part).
   - Supports cancellation by checking `coroutineContext.ensureActive()` per buffer when
