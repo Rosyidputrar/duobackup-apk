@@ -712,7 +712,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
     - part hashes equal the hashes of the sliced ranges
     - sizes not aligned to the buffer
     - the concatenated part ranges cover the input exactly
-- [ ] **M1.4 Crypto** (`crypto` package, JCA only, no Tink in `:core`):
+- [x] **M1.4 Crypto** (`crypto` package, JCA only, no Tink in `:core`):
   - `Hkdf.sha256(ikm, salt, info, len)` with RFC 5869 test cases 1–3 as tests.
   - `KeyMaterial(masterKey)` exposing `contentKey`, `metaKey`, `idKey`, `keyId`.
   - `Oid.of(sha256Hex, idKey?)`, with tests for both modes.
