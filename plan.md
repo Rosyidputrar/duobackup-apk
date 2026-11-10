@@ -837,7 +837,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   | `tg_storage_chat_id` | none |
 
   Settings are exposed as a `Flow<Settings>`.
-- [ ] **M2.3 Secrets** (`SecretStore`). Tink `AeadConfig.register()` and
+- [x] **M2.3 Secrets** (`SecretStore`). Tink `AeadConfig.register()` and
   `AndroidKeysetManager` with the master key URI `android-keystore://duobackup_master`, keyset
   stored in its own prefs file. It encrypts:
   - Telegram `api_id`/`api_hash`
