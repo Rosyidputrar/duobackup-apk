@@ -36,8 +36,8 @@ two disagree. Raise any disagreement in the Decision Log (§10) rather than igno
 
 | Milestone | Title | Branch | Status |
 |---|---|---|---|
-| M0 | Repository, build and CI skeleton | `ci/skeleton` | done (device check S7 pending) |
-| M1 | Core library: formats, math, codecs | `feat/core-formats` | todo |
+| M0 | Repository, build and CI skeleton | `ci/skeleton` | done |
+| M1 | Core library: formats, math, codecs | `feat/core-formats` | done |
 | M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | todo |
 | M3 | Google Drive destination | `feat/drive-destination` | todo |
 | M4 | Backup engine (scan, hash, queue, upload, snapshot) | `feat/backup-engine` | todo |
@@ -1911,3 +1911,18 @@ Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
 - **D11 (2026-11-10, M0):** CI sets `cache-provider: basic` on `gradle/actions/setup-gradle` —
   the v6 default is a proprietary caching service; the basic provider is the open-source one
   built on `actions/cache`.
+- **D12 (2026-11-10, M1):** `KeyFile.unlock` reports a failed unwrap as `WrongPassphrase`, a
+  subtype of `AuthFailed`, for both a wrong passphrase and a modified key file — AES-GCM
+  cannot tell the two apart, and the format has no separate passphrase check value.
+- **D13 (2026-11-10, M1):** `RelPath.normalize` validates but does not rewrite: a backslash
+  stays an ordinary character instead of becoming a separator — it is a legal file name
+  character on Android, so converting it would restore a file under a different path.
+- **D14 (2026-11-10, M1):** the gzip-based golden files (`index-v1*.json.gz*`) are compared
+  after inflating, not as compressed bytes — deflate output is not guaranteed to be identical
+  across zlib builds. All other golden files are compared byte for byte.
+- **D15 (2026-11-10, M1):** the golden directory also holds `vectors.json`, a parameter sheet
+  (keys, passphrase, the counter each file's randomness starts at) — the web tests in M10 need
+  it to reproduce the files without reading the Kotlin sources.
+- **D16 (2026-11-10, M1):** `PartSizing.maxPlainPartSize` throws when a limit leaves no room
+  for a 1 MiB part, rather than returning 0 — a zero part size would only fail later, in the
+  layout step.
