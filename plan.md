@@ -739,7 +739,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
       auth failure, and the JSON schema matches the golden file.
     - Use `iterations = 1000` in tests through a parameter; the default stays 600k.
   - `CaptionCipher` (AES-256-GCM, 12-byte nonce, fixed AAD), with round-trip and tamper tests.
-- [ ] **M1.5 Format codecs** (`format` package, kotlinx.serialization, explicit
+- [x] **M1.5 Format codecs** (`format` package, kotlinx.serialization, explicit
   `@SerialName` for every short key):
   - `CaptionCodec.encode(meta: PartCaption, budget: Int, cipher: CaptionCipher?)` and
     `decode(text)`. Rules from §4.3: the only allowed shortening is the tail-preserving
