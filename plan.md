@@ -910,7 +910,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   - For now the worker body calls a no-op `BackupSession` and writes a `runs` row.
   - Tests: a WorkManager test driver (`work-testing`) checks constraints mapping and unique
     work behaviour.
-- [ ] **M2.8 Release signing in CI.**
+- [x] **M2.8 Release signing in CI.**
   - The `release` build type reads signing config from env vars (`SIGNING_*`). If they are
     absent, the `assembleRelease` task is skipped and the build does not fail.
   - Add a CI job `release-apk`:
