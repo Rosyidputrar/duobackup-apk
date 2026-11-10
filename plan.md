@@ -234,6 +234,7 @@ timestamps are epoch milliseconds.
 | `state` | TEXT NOT NULL | `NEEDS_HASH` `HASHED` `DELETED` `ERROR` |
 | `error` | TEXT NULL | last error code (no paths) |
 | `last_seen_scan` | INTEGER NOT NULL | scan id |
+| `hold` | INTEGER NOT NULL DEFAULT 0 | 1 = imported from a remote index and not yet confirmed on this device; never marked deleted by scans, never expired by retention (§M7.4) |
 
 Unique index `(volume, path)`.
 
@@ -1172,5 +1173,343 @@ the connect/disconnect flow in `:app`.
 - After one file is modified, only it is uploaded.
 - Killing the app during a large upload resumes it on the next run without restarting.
 - The snapshot file appears in `DuoBackup/index/`.
+
+---
+
+### M5 — Restore with layered verification
+
+**Branch:** `feat/restore`.
+
+**Goal:** reliable, resumable, verified restore of any file version from the catalog, plus a
+verify-only "restore drill". Restore is tested from the first destination onward, because a
+backup whose restore has never been exercised is not a backup.
+
+**Steps**
+
+- [ ] **M5.1 Schema v2** (the first real migration).
+  - Add the `restore_jobs` table: `id`, `created_at`, `mode` (`ORIGINAL`/`FOLDER`/
+    `VERIFY_ONLY`), `folder_name`, `conflict` (`KEEP_BOTH`/`OVERWRITE`/`SKIP`),
+    `prefer_dest`, `state`, `finished_at`.
+  - Add the `restore_items` table: `job_id`, `vol`, `path`, `sha256`, `mtime`, `state`
+    (`PENDING`/`RUNNING`/`RESTORED`/`RESTORED_FROM_FALLBACK`/`SKIPPED_IDENTICAL`/`FAILED`),
+    `error`, `bytes_done`.
+  - Write `Migration(1, 2)` with a migration test based on the exported v1 schema.
+- [ ] **M5.2 `RestoreEngine`** in `:core` (§2.4).
+  - **Target path:**
+    - `ORIGINAL` uses `<volume root>/<path>`.
+    - `FOLDER` uses `<primary>/DuoBackup Restore/<folder_name>/<path>`, which is excluded
+      from scans.
+  - **Temp file:** `<target dir>/.<name>.duobackup-part`, kept on the same filesystem so the
+    rename is atomic. Parent directories are created as needed.
+  - **Free space:** before starting a file, require the remaining file bytes plus one stored
+    part plus 64 MiB.
+  - **Per part:**
+    1. Download into the scratch file `restore-<oid16>.<pi>`.
+    2. Check the stored size.
+    3. Stream through `decrypt?` (identity until M8) and SHA-256 at the same time, appending
+       to a *part buffer file* rather than the temp file.
+    4. Only when the hash equals `part_sha256`, append the buffer to the temp file.
+
+    No unverified byte ever reaches the temp file.
+  - **Fallback:** a download or verification failure on the preferred destination tries the
+    other destination for that part. If both fail, the item is `FAILED(PART_UNAVAILABLE |
+    PART_CORRUPT)`. The temp file is kept for a retry and deleted when the job is cancelled.
+  - **Resume:** the temp file length is always at a part boundary, so resume continues at the
+    next part. The whole-file digest is rebuilt by re-hashing the existing temp prefix.
+  - **Finalize:**
+    1. Compare the whole-file SHA-256.
+    2. Apply the conflict policy:
+       - existing file with the same SHA-256: `SKIPPED_IDENTICAL`
+       - `KEEP_BOTH`: rename to `name (restored N).ext`
+       - `OVERWRITE`: atomic replace via `Files.move(ATOMIC_MOVE, REPLACE_EXISTING)`
+       - `SKIP`
+    3. Call `setLastModified(mtime)`.
+    4. Report the result.
+  - **Empty content** creates an empty file. **`VERIFY_ONLY`** runs the same pipeline but
+    discards the output after the whole-file hash matches, and records `verified_at` on the
+    used `part_locations`.
+  - Tests (FakeTransport + temp dirs):
+    - happy path, multi-part
+    - a corrupted part on the preferred destination falls back to the other
+    - both corrupted gives FAILED, and no file at the target
+    - kill mid-file and resume
+    - all three conflict policies
+    - an identical existing file is skipped
+    - empty file
+    - a deep missing directory tree
+    - `VERIFY_ONLY` writes nothing under the target roots
+- [ ] **M5.3 `RestoreWorker`.**
+  - Unique work `duobackup.restore`, foreground `dataSync`, same constraints model as backup.
+    "Wi-Fi only" applies, but the user can override it per job.
+  - Mutually exclusive with `BackupWorker` through a shared `Mutex` in a process-wide
+    `EngineLock`. A scheduled backup that finds a restore running reschedules itself.
+  - After restoring media files, calls `MediaScannerConnection.scanFile` in batches.
+- [ ] **M5.4 Browse and restore UI.**
+  - The tree view is built from the catalog. Each file shows a status chip:
+    - Backed up: Drive / Telegram / Both
+    - Pending
+    - Error
+    - Deleted on device
+  - A file's detail shows its versions (`file_versions`) with dates and sizes.
+  - Actions: restore file, restore version, restore folder, restore everything.
+  - The restore dialog has the mode (default `FOLDER` with name
+    `yyyy-MM-dd HHmm`), the conflict policy (default `KEEP_BOTH`), the preferred destination
+    and "Allow mobile data".
+  - A job screen shows progress and a per-item result list, filterable by FAILED. It has
+    "Retry failed".
+- [ ] **M5.5 Restore drill.**
+  - Settings has "Verify backups now", which runs `VERIFY_ONLY` on a random sample (default
+    5 files, at most 200 MB total, spanning both destinations when available).
+  - It also runs automatically every 7 days on unmetered networks while charging.
+  - The Home screen shows the last verification time and its result.
+
+**Acceptance**
+
+- CI is green.
+- On a device (S7), restore the M4 test folder to `DuoBackup Restore/`. Restored files match
+  their originals byte for byte (compare hashes in the UI detail).
+- Killing the app mid-restore resumes it.
+- Turning on airplane mode mid-part, then off again, recovers.
+- The drill reports OK.
+
+---
+
+### M6 — Telegram destination (TDLib)
+
+**Branch:** `feat/telegram-destination`. It can be split into `feat/tdlib-auth` and
+`feat/telegram-transport`. **Needs:** S4.
+
+**Goal:** `TelegramTransport : BackupTransport` on top of TDLib, with in-app login, a storage
+channel, the global pacer and runtime limit detection.
+
+**Facts to verify first** (from the pinned artifact `com.github.tdlibx:td:<latest tag>`,
+1.8.56 at the time of writing; JitPack serves it):
+- the exact constructors of `SetTdlibParameters`, `CreateNewSupergroupChat`,
+  `SearchChatMessages` (newer TDLib versions add `topicId`), `MessageSendOptions` and
+  `InputMessageDocument`
+- the error format for flood waits
+
+Record the findings in the Decision Log before writing the gateway.
+
+**Steps**
+
+- [ ] **M6.1 Dependency and packaging.**
+  - Add `tdlib = { module = "com.github.tdlibx:td", version = "…" }`.
+  - Set `ndk.abiFilters = ["arm64-v8a", "armeabi-v7a", "x86_64"]`.
+  - Release builds produce ABI splits plus a universal APK. Debug builds stay universal.
+  - R8 rule: `-keep class org.drinkless.tdlib.** { *; }`.
+  - CI asserts the APK contains `lib/arm64-v8a/libtdjni.so` (`unzip -l`).
+- [ ] **M6.2 `TdGateway`** (interface plus `TdGatewayImpl`), the only code that touches
+  `org.drinkless.tdlib.Client`.
+  - One client per process, owned by an application-scoped singleton (`TdHolder`) and
+    shared by the UI and workers.
+  - `Client.create(updatesHandler, updateExceptionHandler, defaultExceptionHandler)`.
+    Updates are emitted to a `MutableSharedFlow<TdApi.Object>(extraBufferCapacity = 256)`.
+  - `suspend fun <R : TdApi.Object> send(fn: TdApi.Function<R>): R` uses
+    `suspendCancellableCoroutine`. A `TdApi.Error` becomes `TdError(code, message)`.
+  - `Client.execute` is used for synchronous calls (`setLogVerbosityLevel(1)` at startup;
+    TDLib logs go to `noBackupFilesDir/tdlib/td.log`, capped at 10 MB, or off in release).
+  - Error parsing (`TdErrors.retryAfterSeconds(e)`) handles both `429 "Too Many Requests:
+    retry after N"` and `420 "FLOOD_WAIT_N"`. Unit tests cover both and a non-match.
+- [ ] **M6.3 Auth state machine** (`TelegramAuth`), exposing a
+  `StateFlow<TgAuthState>` mapped from `updateAuthorizationState`.
+  - `WaitTdlibParameters`: send `SetTdlibParameters` with:
+    - `databaseDirectory = filesDir/tdlib/db`
+    - `filesDirectory = noBackupFilesDir/tdlib/files`
+    - `databaseEncryptionKey` from `SecretStore` (generated once)
+    - `useFileDatabase`, `useChatInfoDatabase` and `useMessageDatabase` set to true
+    - `useSecretChats = false`
+    - `apiId`/`apiHash` from `SecretStore`
+    - `systemLanguageCode = Locale.getDefault().language`
+    - `deviceModel = Build.MODEL`, `systemVersion = Build.VERSION.RELEASE`
+    - `applicationVersion = BuildConfig.VERSION_NAME`
+  - The login flow supports these UI states:
+    - phone number
+    - **QR login** (`RequestQrCodeAuthentication`, which renders the `link` from
+      `WaitOtherDeviceConfirmation` as a QR; preferred when the user has Telegram on another
+      device)
+    - code (shows the code type: app / SMS / call)
+    - email address and email code (when Telegram asks for them)
+    - 2FA password (shows the hint)
+  - `WaitRegistration` shows "Create the account in the official Telegram app first". No
+    sign-up is done here.
+  - `Ready` checks `getMe` and stores the user id.
+  - `LoggingOut`/`Closed` handling: if `Closed` arrives unexpectedly, the holder recreates
+    the client.
+  - Log out calls `LogOut` and leaves the channel intact.
+  - **Credential entry screen:** `api_id` (positive integer) and `api_hash` (32 hex chars),
+    validated, with a link to my.telegram.org and a step-by-step explainer.
+  - Workers call `TelegramAuth.awaitReady(timeout = 30 s)`. If it is not ready, they throw
+    `AuthRequired` and post a "Sign in to Telegram" notification.
+- [ ] **M6.4 `TelegramPacer`** (`CLAUDE.md` invariant 4).
+  - Wraps every message-creating or editing call: `sendMessage`, `editMessage*`,
+    `deleteMessages`, `createNewSupergroupChat`, `setChatDescription`.
+  - Uses a `Mutex`, a minimum spacing of 1.5 s between writes (configurable; never below
+    1 s), and a global `pausedUntil` set to `now + (retryAfter + 1) s` on any flood-wait.
+    That includes flood waits reported asynchronously through `updateMessageSendFailed`.
+  - Exposes `StateFlow<PacerState>` so the UI can show "Telegram asked to wait 6 min".
+  - A wait longer than 30 min pauses the Telegram destination for this run (`PauseDest`)
+    instead of blocking the worker.
+  - Tests use virtual time:
+    - spacing is respected
+    - a flood-wait blocks all callers
+    - the async flood-wait path works
+    - a long wait gives `PauseDest`
+- [ ] **M6.5 `TelegramLimits`** (`CLAUDE.md` §5).
+  - `getOption("is_premium")` gives `OptionValueBoolean`.
+  - `getApplicationConfig()` gives a `JsonValueObject`. Read `upload_max_fileparts_premium`
+    or `upload_max_fileparts_default` (a `JsonValueNumber`).
+    `maxFileBytes = parts × 524_288`.
+  - `getOption("message_caption_length_max")` gives `OptionValueInteger`.
+  - On failure or a missing key, use the `Limits.kt` fallbacks and log a warning.
+  - Values are cached for the session and invalidated on `updateOption` for `is_premium` /
+    `message_caption_length_max`.
+  - Unit tests run with a fake gateway returning recorded JSON values, missing keys and
+    errors.
+- [ ] **M6.6 Storage channel** (`StorageChannel`, §4.3).
+  - `ensure()` checks:
+    1. If `tg_storage_chat_id` is set and `getChat` succeeds, check that the marker is in
+       `getSupergroupFullInfo(...).description`. If so, done.
+    2. Otherwise discover: `searchChats("DuoBackup", 50)` then `searchChatsOnServer`, keep
+       channel chats where the user is the creator and the description has
+       `#duobackup-storage v1`. If there is one, use it. If several, return the candidates to
+       the UI to choose.
+    3. If none, create it with `createNewSupergroupChat(title = "DuoBackup", isChannel = true,
+       description = marker)`, through the pacer.
+  - The chat is archived and muted (`addChatToList(ChatListArchive)`,
+    `setChatNotificationSettings` mute forever) so it doesn't clutter the user's chat list.
+    This is best effort.
+- [ ] **M6.7 `TelegramTransport : BackupTransport`.**
+  - `uploadPart`:
+    1. Build the caption with `CaptionCodec` under the detected budget.
+    2. Call `sendMessage(chatId, InputMessageDocument(InputFileLocal(scratch), thumbnail =
+       null, disableContentTypeDetection = true, caption), options(disableNotification =
+       true))` through the pacer.
+    3. Wait on the updates flow for `updateMessageSendSucceeded` whose `oldMessageId` equals
+       the temporary id, or `updateMessageSendFailed`.
+    4. Track `updateFile` for the document file id to report upload progress
+       (`remote.uploadedSize`).
+    5. **Stall timeout:** if there is no progress for 5 min, call `deleteMessages` on the
+       temporary message (which cancels the upload) and throw `Transient`.
+    6. On success, return `RemoteLocation.Telegram(chatId, message.id,
+       document.document.remote.id, document.document.remote.uniqueId)`.
+  - `downloadPart`:
+    1. Resolve the file with `getRemoteFile(remoteFileId)`. If that fails (stale file
+       reference), use `getMessage(chatId, messageId)` and take the document file.
+    2. Call `downloadFile(fileId, priority = 16, offset = 0, limit = 0, synchronous =
+       false)` and observe `updateFile` until `local.isDownloadingCompleted`, applying the
+       same stall timeout.
+    3. Move `local.path` to `target` (copy and delete if on a different filesystem), then
+       call `deleteFile(fileId)` so TDLib's cache does not grow.
+  - `checkPart` uses `getMessage`. A "not found" error gives `MISSING`.
+  - `deletePart` calls `deleteMessages([id], revoke = true)` through the pacer.
+  - `putIndex` sends the document with an index caption (§4.3) and returns the location.
+  - `listIndexes` uses `searchChatMessages(chatId, query = "#duobackup-index", filter =
+    SearchMessagesFilterDocument, limit = 100)`. It pages with `fromMessageId` and parses the
+    captions.
+  - `getIndex` downloads like a part. `deleteIndex` deletes like a part.
+  - Tests (`FakeTdGateway`, plain JVM unit tests in `:telegram`; the `TdApi` classes are
+    plain Java, and only `Client` needs native code):
+    - the send-succeeded and send-failed paths
+    - an async flood-wait
+    - stall timeout
+    - a stale remote id falls back to `getMessage`
+    - download cleanup calls `deleteFile`
+    - caption over budget gives an error before any send
+    - index listing parses only DuoBackup captions
+- [ ] **M6.8 Destinations UI for Telegram.**
+  - The card shows the signed-in account (name, Premium badge if detected), the detected
+    per-file limit and caption limit, the storage channel name, the pacer state, and buttons
+    for Sign in / Sign out / Test upload (same probe as Drive, using a probe caption
+    `#duobackup-probe`, deleted afterwards).
+  - An explainer says that Telegram may slow uploads after tens of GB on free accounts, so the
+    first full backup can take days and resumes automatically.
+- [ ] **M6.9 Enable Telegram in the engine.** `BackupWorker` includes `TelegramTransport`
+  when it is enabled. The engine from M4 needs no changes; if it does, the abstraction is
+  wrong, so fix the abstraction.
+
+**Acceptance**
+
+- CI is green, and the APK contains the TDLib native libraries.
+- On a device (S7):
+  - Sign in by code and by QR both work.
+  - 2FA works when it is enabled.
+  - The channel is created once (signing out and in again reuses it).
+  - Test upload passes.
+  - A > 600 MB file backs up as 2 parts (on a free account: 512 MiB + rest).
+  - Restore from Telegram verifies.
+  - Killing the app mid-part re-sends that part only, with no duplicate parts recorded
+    (orphan messages are allowed and cleaned in M9).
+
+---
+
+### M7 — Dual destination, reconciliation, connect existing backup
+
+**Branch:** `feat/dual-destination`.
+
+**Goal:** both destinations work together. The catalog can be rebuilt on a new phone from
+either destination, and redundancy can be inspected and repaired.
+
+**Steps**
+
+- [ ] **M7.1 Concurrent uploaders with a shared producer** (§2.5).
+  - Verify, with an engine test using two `FakeTransport`s, that:
+    - a part's scratch file is produced once and used by both destinations
+    - one destination being paused (QUOTA or a long flood-wait) does not stop the other
+    - the paused destination later re-produces the part from the source
+  - Scratch accounting never exceeds 2 parts.
+- [ ] **M7.2 Per-file redundancy status.**
+  - Derived by query: `BOTH`, `DRIVE_ONLY`, `TELEGRAM_ONLY`, `PENDING`, `ERROR`.
+  - Shown in Browse and summarised on Home ("12,431 files · 98 % on both").
+- [ ] **M7.3 Snapshot to both destinations.** `SnapshotWriter` writes to every prepared
+  destination. `snapshots` rows record both locations. Rotation runs per destination.
+- [ ] **M7.4 Connect existing backup** (new phone, reinstall, wiped app data).
+  - The Onboarding screen offers "I already have a DuoBackup backup". Connect Drive and/or
+    Telegram, then:
+    1. `listIndexes` on each, take the newest of each, download and verify (gzip and JSON
+       well-formed), then `IndexSnapshot.merge`.
+    2. If the index is encrypted, prompt for the passphrase (M8 adds it; until then encrypted
+       indexes are reported as "requires encryption support").
+    3. Import into the catalog in one transaction: `contents`, `content_parts`,
+       `part_locations`, then `files` (state `HASHED`, size/mtime from the index,
+       **`hold = 1`**) and current `file_versions`.
+    4. Report the counts.
+  - **Hold semantics:**
+    - Scans compare held files normally. If the path exists with the same size and mtime, it
+      is unchanged, so `hold` is cleared and nothing is uploaded.
+    - If the path exists but differs, it is a new version, and `hold` is cleared.
+    - If the path is missing, nothing happens: no deletion is recorded.
+    - Restoring a held file clears `hold`.
+    - Browse has a filter "Not on this phone (from previous backup)" with bulk actions
+      *Restore* and *Forget* (forget = release hold, so it becomes deleted and expires
+      through retention).
+  - Tests: import from Drive-only, Telegram-only and merged indexes; hold semantics in all four
+    cases; re-import is idempotent.
+- [ ] **M7.5 Rebuild from Telegram captions** (disaster path when no index is readable).
+  - Page through the storage channel with `searchChatMessages(filter = Document)`, newest to
+    oldest, 100 per page, through a read pacer with 1 req/s.
+  - Decode every `db1:`/`dbe1:` caption into contents, parts and locations. Group parts by
+    `o` and accept a content only when all `pc` parts are present.
+  - Recover paths from `p`/`vol`/`mt`. One path per content is the limit; note this in the UI.
+  - Show a progress and result summary. This is also offered from Settings → "Rebuild catalog
+    from Telegram".
+  - Tests: a fake channel with complete contents, incomplete contents, foreign messages and
+    duplicate parts (the newest message wins).
+- [ ] **M7.6 Repair redundancy** (manual action plus a monthly suggestion).
+  - Scan the catalog for parts present on one destination but missing on the other enabled
+    one.
+  - Source preference is:
+    1. the local file, if it still exists and its part hash matches
+    2. otherwise download from the destination that has it, verify `part_sha256`, then upload
+  - This uses the same uploader, budget and pacer rules.
+  - Tests: both source paths, plus a corrupt remote that is not propagated.
+
+**Acceptance**
+
+- CI is green.
+- On a device (S7), with both destinations enabled, a backup shows "on both" for all files.
+- After clearing app data, "Connect existing backup" restores the full Browse tree from Drive.
+  Doing it again from Telegram only gives the same tree.
+- Deleting the Drive index files and running "Rebuild from Telegram" recovers all contents.
 
 <!-- plan:continue -->
