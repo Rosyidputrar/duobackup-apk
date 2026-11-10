@@ -36,8 +36,8 @@ two disagree. Raise any disagreement in the Decision Log (§10) rather than igno
 
 | Milestone | Title | Branch | Status |
 |---|---|---|---|
-| M0 | Repository, build and CI skeleton | `ci/skeleton` | done (device check S7 pending) |
-| M1 | Core library: formats, math, codecs | `feat/core-formats` | todo |
+| M0 | Repository, build and CI skeleton | `ci/skeleton` | done |
+| M1 | Core library: formats, math, codecs | `feat/core-formats` | done |
 | M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | todo |
 | M3 | Google Drive destination | `feat/drive-destination` | todo |
 | M4 | Backup engine (scan, hash, queue, upload, snapshot) | `feat/backup-engine` | todo |
@@ -668,14 +668,14 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
 
 **Steps**
 
-- [ ] **M1.1 Models and interfaces** (§2.2):
+- [x] **M1.1 Models and interfaces** (§2.2):
   - `DestinationId`, `BackupTransport`, `TransportException`, `RemoteLocation`
     (a sealed class with `Telegram(chatId, messageId, remoteFileId, remoteUniqueId)` and
     `Drive(fileId)`), `PartUpload(file, oid, partIndex, partSha256OrMac, storedSize, caption
     material)`, `PartPresence`, `IndexRef`, `IndexMeta`, `PrepareResult`,
     `DestinationLimits(maxFileBytes, captionMax, quotaFreeBytes?, isPremium?)`.
   - `Clock`, `ScratchSpace`, `SecureRandomSource` (injectable so tests are deterministic).
-- [ ] **M1.2 `Limits.kt` and `PartSizing`.**
+- [x] **M1.2 `Limits.kt` and `PartSizing`.**
   - Fallback constants, used only when detection fails:
     - `TG_FALLBACK_MAX_PARTS = 4000`
     - `TG_UPLOAD_PART_BYTES = 512 * 1024`, which gives `2_097_152_000` bytes
@@ -701,7 +701,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
       correct encrypted value
     - the stored size of the chosen part never exceeds the limit (property test over random
       limits)
-- [ ] **M1.3 `Hasher`.**
+- [x] **M1.3 `Hasher`.**
   - `hash(input: InputStream, partSize: Long): HashResult(sha256, size, partHashes: List<String>)`.
   - Single pass with a 1 MiB buffer and two `MessageDigest` instances (whole + current part).
   - Supports cancellation by checking `coroutineContext.ensureActive()` per buffer when
@@ -712,7 +712,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
     - part hashes equal the hashes of the sliced ranges
     - sizes not aligned to the buffer
     - the concatenated part ranges cover the input exactly
-- [ ] **M1.4 Crypto** (`crypto` package, JCA only, no Tink in `:core`):
+- [x] **M1.4 Crypto** (`crypto` package, JCA only, no Tink in `:core`):
   - `Hkdf.sha256(ikm, salt, info, len)` with RFC 5869 test cases 1–3 as tests.
   - `KeyMaterial(masterKey)` exposing `contentKey`, `metaKey`, `idKey`, `keyId`.
   - `Oid.of(sha256Hex, idKey?)`, with tests for both modes.
@@ -739,7 +739,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
       auth failure, and the JSON schema matches the golden file.
     - Use `iterations = 1000` in tests through a parameter; the default stays 600k.
   - `CaptionCipher` (AES-256-GCM, 12-byte nonce, fixed AAD), with round-trip and tamper tests.
-- [ ] **M1.5 Format codecs** (`format` package, kotlinx.serialization, explicit
+- [x] **M1.5 Format codecs** (`format` package, kotlinx.serialization, explicit
   `@SerialName` for every short key):
   - `CaptionCodec.encode(meta: PartCaption, budget: Int, cipher: CaptionCipher?)` and
     `decode(text)`. Rules from §4.3: the only allowed shortening is the tail-preserving
@@ -760,7 +760,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
   - `DriveProps.part(...)`, `DriveProps.index(...)` and friends. Each returns
     `Map<String, String>` and asserts that every key+value pair is ≤ 120 UTF-8 bytes. Tests
     cover the worst case: a 64-hex oid, a large part index, and a 64-hex ph.
-- [ ] **M1.6 Golden vectors.**
+- [x] **M1.6 Golden vectors.**
   - `core/src/test/resources/golden/` holds:
     - `dbe1-*.bin` (fixed key and salt) with their `.plain` inputs
     - `keyfile-v1.json` (fixed passphrase "correct horse battery staple", fixed salt and
@@ -774,13 +774,13 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
     documented in a comment. The same files are consumed by the web tests in M10, which keeps
     the two implementations interoperable.
   - Raise Kover's bound to 80 %.
-- [ ] **M1.7 `Backoff` and retry policy.**
+- [x] **M1.7 `Backoff` and retry policy.**
   - `Backoff(base = 2 s, factor = 2.0, cap = 1 h, jitter = FULL)` with
     `nextDelay(attempt, random)`.
   - `RetryPolicy.classify(TransportException)` gives RETRY_AFTER(ms), BACKOFF, PAUSE_DEST or
     FAIL_ITEM.
   - Tests: monotone caps, jitter within bounds, and classification for each exception.
-- [ ] **M1.8 Path utilities.**
+- [x] **M1.8 Path utilities.**
   - `RelPath.normalize` (rejects `..`, absolute paths and empty segments; normalises
     separators).
   - `ExcludeMatcher(globs)` supports `**`, `*` and `?`, matching on relative paths.
@@ -1911,3 +1911,18 @@ Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
 - **D11 (2026-11-10, M0):** CI sets `cache-provider: basic` on `gradle/actions/setup-gradle` —
   the v6 default is a proprietary caching service; the basic provider is the open-source one
   built on `actions/cache`.
+- **D12 (2026-11-10, M1):** `KeyFile.unlock` reports a failed unwrap as `WrongPassphrase`, a
+  subtype of `AuthFailed`, for both a wrong passphrase and a modified key file — AES-GCM
+  cannot tell the two apart, and the format has no separate passphrase check value.
+- **D13 (2026-11-10, M1):** `RelPath.normalize` validates but does not rewrite: a backslash
+  stays an ordinary character instead of becoming a separator — it is a legal file name
+  character on Android, so converting it would restore a file under a different path.
+- **D14 (2026-11-10, M1):** the gzip-based golden files (`index-v1*.json.gz*`) are compared
+  after inflating, not as compressed bytes — deflate output is not guaranteed to be identical
+  across zlib builds. All other golden files are compared byte for byte.
+- **D15 (2026-11-10, M1):** the golden directory also holds `vectors.json`, a parameter sheet
+  (keys, passphrase, the counter each file's randomness starts at) — the web tests in M10 need
+  it to reproduce the files without reading the Kotlin sources.
+- **D16 (2026-11-10, M1):** `PartSizing.maxPlainPartSize` throws when a limit leaves no room
+  for a 1 MiB part, rather than returning 0 — a zero part size would only fail later, in the
+  layout step.

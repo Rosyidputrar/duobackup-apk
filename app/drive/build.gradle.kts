@@ -25,7 +25,7 @@ kover {
     reports {
         verify {
             rule {
-                // Raised to 80 in M1.6, once the module has real logic to cover.
+                // Raised to 80 in M3, once the module has real logic to cover.
                 minBound(0)
             }
         }
