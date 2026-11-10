@@ -573,7 +573,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
   - Add `.editorconfig`: 4 spaces for Kotlin/KTS, 2 for TS/JSON/YAML/MD, final newline, LF.
     Add `ktlint_code_style = android_studio`.
   - Add `.gitattributes`: `* text=auto eol=lf`, and `*.jar binary`.
-- [ ] **M0.2 Gradle project in `app/`.**
+- [x] **M0.2 Gradle project in `app/`.**
   - Create these files:
     - `app/settings.gradle.kts`: `rootProject.name = "duobackup"`, include `:app`, `:core`,
       `:drive`, `:telegram`. Add `pluginManagement` and `dependencyResolutionManagement`
@@ -601,12 +601,12 @@ lints and tests on every PR, and that produces a debug APK artifact.
     3. Copy `gradlew` and `gradlew.bat` from the same tag, and keep `gradlew` executable
        (`git update-index --chmod=+x`).
     4. CI runs `gradle/actions/wrapper-validation` on every build.
-- [ ] **M0.3 Convention for module config.**
+- [x] **M0.3 Convention for module config.**
   - Keep it simple: no `build-logic` included build in v1. Each module's
     `build.gradle.kts` sets `jvmToolchain(17)` and its plugins directly.
   - Android modules: `compileSdk`/`targetSdk` = latest stable API level supported by the
     pinned AGP, and `minSdk = 26`.
-- [ ] **M0.4 Module stubs**, each with one trivial passing test so the test tasks are wired:
+- [x] **M0.4 Module stubs**, each with one trivial passing test so the test tasks are wired:
   - `:core`: `kotlin("jvm")` + `kotlinx-serialization`, JUnit 5, Kover. Contains
     `DestinationId` only.
   - `:drive`: `kotlin("jvm")`, depends on `:core`.
@@ -618,7 +618,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
     - `debug` build type uses `applicationIdSuffix = ".debug"`.
     - `@HiltAndroidApp class DuoBackupApp`, plus `MainActivity` showing a Material 3
       scaffold with the text "DuoBackup".
-- [ ] **M0.5 Static checks.**
+- [x] **M0.5 Static checks.**
   - Apply the ktlint Gradle plugin to all modules.
   - Android lint: `abortOnError = true`, `checkDependencies = true`, no baseline file.
   - Kover on `:core` and `:drive` with a verify rule of **≥ 80 % line coverage** (enforced
