@@ -780,7 +780,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
   - `RetryPolicy.classify(TransportException)` gives RETRY_AFTER(ms), BACKOFF, PAUSE_DEST or
     FAIL_ITEM.
   - Tests: monotone caps, jitter within bounds, and classification for each exception.
-- [ ] **M1.8 Path utilities.**
+- [x] **M1.8 Path utilities.**
   - `RelPath.normalize` (rejects `..`, absolute paths and empty segments; normalises
     separators).
   - `ExcludeMatcher(globs)` supports `**`, `*` and `?`, matching on relative paths.
