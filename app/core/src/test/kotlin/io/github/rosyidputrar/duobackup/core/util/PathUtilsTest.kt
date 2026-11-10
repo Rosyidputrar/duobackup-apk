@@ -60,6 +60,7 @@ class PathUtilsTest {
             "Download/movie.mkv.part",
             "Download/.movie.mkv.duobackup-part",
             "DCIM/.nomedia",
+            "DuoBackup Restore/DCIM/a.jpg",
             ".nomedia"
         )
         val included = listOf(
@@ -73,7 +74,8 @@ class PathUtilsTest {
             "Download/partial.txt",
             "Music/trash/a.mp3",
             "DCIM/.nomedia.txt",
-            "Backups/Android/data/a"
+            "Backups/Android/data/a",
+            "Backups/DuoBackup Restore/a"
         )
         excluded.forEach { assertTrue(matcher.matches(it), it) }
         included.forEach { assertFalse(matcher.matches(it), it) }
