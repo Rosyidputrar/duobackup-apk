@@ -804,7 +804,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
 
 **Steps**
 
-- [ ] **M2.1 Room catalog** in `:app` (`data.db` package).
+- [x] **M2.1 Room catalog** in `:app` (`data.db` package).
   - Write entities and DAOs exactly per §3, with `@Database(version = 1, exportSchema = true)`
     and the KSP arg `room.schemaLocation`.
   - `RoomCatalog : Catalog` is the only class the engine sees.
