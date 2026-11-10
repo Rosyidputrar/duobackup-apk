@@ -16,7 +16,6 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -55,21 +54,25 @@ class BrowseViewModelTest {
         val dcim = FolderEntry("DCIM", true, 2, 15)
         val camera = FolderEntry("Camera", true, 1, 10)
         viewModel.state.test {
-            assertEquals(BrowseState(), awaitItem())
-            assertEquals(BrowseState("", listOf(dcim, FolderEntry("top.txt", false, 1, 1))), awaitItem())
+            // The initial empty state may or may not be seen before the first query lands.
+            suspend fun awaitFolder(folder: String, entries: List<FolderEntry>) {
+                val expected = BrowseState(folder, entries)
+                while (true) if (awaitItem() == expected) return
+            }
+            awaitFolder("", listOf(dcim, FolderEntry("top.txt", false, 1, 1)))
 
             viewModel.open(FolderEntry("top.txt", false, 1, 1))
             expectNoEvents()
 
             viewModel.open(dcim)
-            assertEquals(BrowseState("DCIM", listOf(camera, FolderEntry("b.jpg", false, 1, 5))), awaitItem())
+            awaitFolder("DCIM", listOf(camera, FolderEntry("b.jpg", false, 1, 5)))
             viewModel.open(camera)
-            assertEquals(BrowseState("DCIM/Camera", listOf(FolderEntry("a.jpg", false, 1, 10))), awaitItem())
+            awaitFolder("DCIM/Camera", listOf(FolderEntry("a.jpg", false, 1, 10)))
 
             assertTrue(viewModel.up())
-            assertEquals("DCIM", awaitItem().folder)
+            awaitFolder("DCIM", listOf(camera, FolderEntry("b.jpg", false, 1, 5)))
             assertTrue(viewModel.up())
-            assertEquals("", awaitItem().folder)
+            awaitFolder("", listOf(dcim, FolderEntry("top.txt", false, 1, 1)))
             assertFalse(viewModel.up())
             cancelAndIgnoreRemainingEvents()
         }
