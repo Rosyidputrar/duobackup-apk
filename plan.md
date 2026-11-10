@@ -847,7 +847,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   The API is `put(name, bytes)`, `get(name)` and `delete(name)`. The value AAD = name.
   Tests (Robolectric where the Keystore is available, otherwise a fake): round-trip,
   tampering is detected, and deleting a key removes it.
-- [ ] **M2.4 All Files Access flow.**
+- [x] **M2.4 All Files Access flow.**
   - Add `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
     tools:ignore="ScopedStorage"/>`.
   - Check: `Environment.isExternalStorageManager()`.
@@ -856,7 +856,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   - Re-check in `onResume`.
   - **Honesty note in the UI:** on Android 11+ even All Files Access cannot read
     `Android/data` and `Android/obb`, so they are always excluded and the UI says so.
-- [ ] **M2.5 `AndroidSourceFileSystem : SourceFileSystem`.**
+- [x] **M2.5 `AndroidSourceFileSystem : SourceFileSystem`.**
   - Walk `Environment.getExternalStorageDirectory()` (volume `primary`) with
     `java.nio.file.Files.walkFileTree`. Do not follow symlinks.
   - Skip unreadable entries with a counted warning, not a failure.
