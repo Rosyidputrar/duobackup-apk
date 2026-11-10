@@ -817,7 +817,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
     - unreferenced contents
   - Tests: Robolectric DAO tests on an in-memory DB covering every query, plus a test that the
     exported schema JSON matches the committed one.
-- [ ] **M2.2 Settings** (DataStore Preferences, `SettingsRepository`). Keys and defaults:
+- [x] **M2.2 Settings** (DataStore Preferences, `SettingsRepository`). Keys and defaults:
 
   | key | default |
   |---|---|
