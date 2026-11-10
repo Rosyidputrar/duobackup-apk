@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kover)
 }
@@ -9,11 +10,16 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":core"))
+    api(project(":core"))
+    api(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
@@ -25,8 +31,7 @@ kover {
     reports {
         verify {
             rule {
-                // Raised to 80 in M3, once the module has real logic to cover.
-                minBound(0)
+                minBound(80)
             }
         }
     }
