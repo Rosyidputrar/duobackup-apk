@@ -36,7 +36,7 @@ two disagree. Raise any disagreement in the Decision Log (§10) rather than igno
 
 | Milestone | Title | Branch | Status |
 |---|---|---|---|
-| M0 | Repository, build and CI skeleton | `ci/skeleton` | todo |
+| M0 | Repository, build and CI skeleton | `ci/skeleton` | done (device check S7 pending) |
 | M1 | Core library: formats, math, codecs | `feat/core-formats` | todo |
 | M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | todo |
 | M3 | Google Drive destination | `feat/drive-destination` | todo |
@@ -562,7 +562,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
 
 **Steps**
 
-- [ ] **M0.1 Repo hygiene.**
+- [x] **M0.1 Repo hygiene.**
   - Add `.gitignore`. It must cover:
     - Android/Gradle (`.gradle/`, `build/`, `local.properties`, `*.keystore`, `*.jks`,
       `captures/`, `.idea/` except shared run configs)
@@ -573,7 +573,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
   - Add `.editorconfig`: 4 spaces for Kotlin/KTS, 2 for TS/JSON/YAML/MD, final newline, LF.
     Add `ktlint_code_style = android_studio`.
   - Add `.gitattributes`: `* text=auto eol=lf`, and `*.jar binary`.
-- [ ] **M0.2 Gradle project in `app/`.**
+- [x] **M0.2 Gradle project in `app/`.**
   - Create these files:
     - `app/settings.gradle.kts`: `rootProject.name = "duobackup"`, include `:app`, `:core`,
       `:drive`, `:telegram`. Add `pluginManagement` and `dependencyResolutionManagement`
@@ -601,12 +601,12 @@ lints and tests on every PR, and that produces a debug APK artifact.
     3. Copy `gradlew` and `gradlew.bat` from the same tag, and keep `gradlew` executable
        (`git update-index --chmod=+x`).
     4. CI runs `gradle/actions/wrapper-validation` on every build.
-- [ ] **M0.3 Convention for module config.**
+- [x] **M0.3 Convention for module config.**
   - Keep it simple: no `build-logic` included build in v1. Each module's
     `build.gradle.kts` sets `jvmToolchain(17)` and its plugins directly.
   - Android modules: `compileSdk`/`targetSdk` = latest stable API level supported by the
     pinned AGP, and `minSdk = 26`.
-- [ ] **M0.4 Module stubs**, each with one trivial passing test so the test tasks are wired:
+- [x] **M0.4 Module stubs**, each with one trivial passing test so the test tasks are wired:
   - `:core`: `kotlin("jvm")` + `kotlinx-serialization`, JUnit 5, Kover. Contains
     `DestinationId` only.
   - `:drive`: `kotlin("jvm")`, depends on `:core`.
@@ -618,12 +618,12 @@ lints and tests on every PR, and that produces a debug APK artifact.
     - `debug` build type uses `applicationIdSuffix = ".debug"`.
     - `@HiltAndroidApp class DuoBackupApp`, plus `MainActivity` showing a Material 3
       scaffold with the text "DuoBackup".
-- [ ] **M0.5 Static checks.**
+- [x] **M0.5 Static checks.**
   - Apply the ktlint Gradle plugin to all modules.
   - Android lint: `abortOnError = true`, `checkDependencies = true`, no baseline file.
   - Kover on `:core` and `:drive` with a verify rule of **≥ 80 % line coverage** (enforced
     from M1; set the rule now with `minBound(0)` and raise it in M1.6).
-- [ ] **M0.6 `.github/workflows/android.yml`.**
+- [x] **M0.6 `.github/workflows/android.yml`.**
   - Triggers: `pull_request` and `push` to `main`, with paths `app/**` and
     `.github/workflows/android.yml`; also `workflow_dispatch`.
   - `concurrency: android-${{ github.ref }}` with `cancel-in-progress: true`.
@@ -642,9 +642,9 @@ lints and tests on every PR, and that produces a debug APK artifact.
         (retention 14 days)
     11. on failure: upload `**/build/reports/**` as artifact `reports`.
   - Pin actions to major versions (`@v4`, etc.).
-- [ ] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
+- [x] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
   `/app`) and `github-actions` (directory `/`), weekly, grouped minor/patch updates.
-- [ ] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
+- [x] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
   the debug APK from the Actions artifacts, and a link to `plan.md`.
 
 **Acceptance**
@@ -1901,3 +1901,13 @@ Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
   (`is_premium`, `getApplicationConfig` → `upload_max_fileparts_*`,
   `message_caption_length_max`), and so is the Drive quota (`about.storageQuota`) — accounts
   differ and change over time; constants are fallbacks only.
+- **D8 (2026-11-10, M0):** `compileSdk`/`targetSdk` are 37, not the 36 written when the plan was
+  drafted — API 37 is the latest stable platform and AGP 9.5.1 supports it.
+- **D9 (2026-11-10, M0):** `:core` and `:drive` test on JUnit 6 (Jupiter), not JUnit 5 — it is
+  the latest stable release of the same API line; the test API is unchanged.
+- **D10 (2026-11-10, M0):** Android modules do not apply the `kotlin-android` plugin — AGP 9
+  compiles Kotlin itself (built-in Kotlin); the Kotlin version is still pinned in the catalog
+  through the Compose and serialization compiler plugins.
+- **D11 (2026-11-10, M0):** CI sets `cache-provider: basic` on `gradle/actions/setup-gradle` —
+  the v6 default is a proprietary caching service; the basic provider is the open-source one
+  built on `actions/cache`.
