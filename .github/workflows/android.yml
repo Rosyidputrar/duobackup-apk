@@ -7,6 +7,7 @@ on:
       - ".github/workflows/android.yml"
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - "app/**"
       - ".github/workflows/android.yml"
@@ -43,6 +44,15 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
+      # Robolectric downloads large Android jars at test time, and Maven Central rate-limits
+      # them per IP. Keeping them between runs avoids both the download and the limit.
+      - name: Cache Robolectric Android jars
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ hashFiles('app/gradle/libs.versions.toml', 'app/app/src/test/resources/robolectric.properties') }}
+          restore-keys: robolectric-
+
       - name: No Android imports in :core
         run: "! grep -rn 'import android' core/src"
 
@@ -54,6 +64,11 @@ jobs:
 
       - name: Android unit tests
         run: ./gradlew testDebugUnitTest
+
+      - name: Room schema is committed
+        run: |
+          git add --intent-to-add app/schemas
+          git diff --exit-code -- app/schemas
 
       - name: Android lint
         run: ./gradlew lintDebug
@@ -75,3 +90,74 @@ jobs:
         with:
           name: reports
           path: "**/build/reports/**"
+
+  release-apk:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+    steps:
+      - name: Check for signing secrets
+        id: signing
+        working-directory: .
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ] && [ -n "$SIGNING_STORE_PASSWORD" ] \
+            && [ -n "$SIGNING_KEY_ALIAS" ] && [ -n "$SIGNING_KEY_PASSWORD" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Signing secrets are not set, so no release APK is built."
+          fi
+
+      - name: Checkout
+        if: steps.signing.outputs.available == 'true'
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        if: steps.signing.outputs.available == 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        if: steps.signing.outputs.available == 'true'
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Decode keystore
+        if: steps.signing.outputs.available == 'true'
+        run: |
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "SIGNING_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Assemble release APK
+        if: steps.signing.outputs.available == 'true'
+        run: ./gradlew assembleRelease
+
+      # The SHA-1 is public information: it goes into the Google Cloud OAuth client.
+      - name: Print signing certificate fingerprints
+        if: steps.signing.outputs.available == 'true'
+        run: |
+          keytool -list -v -keystore "$SIGNING_KEYSTORE_FILE" -storepass "$SIGNING_STORE_PASSWORD" \
+            -alias "$SIGNING_KEY_ALIAS" | grep -E "SHA1:|SHA256:"
+
+      - name: Upload release APK
+        if: steps.signing.outputs.available == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: duobackup-release-apk
+          path: app/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"

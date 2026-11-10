@@ -1,4 +1,119 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
   <string name="app_name">DuoBackup</string>
+
+  <string name="notification_channel_backup">Backup progress</string>
+  <string name="notification_backup_title">Backing up</string>
+  <string name="notification_backup_text">DuoBackup is backing up your files.</string>
+  <string name="action_stop">Stop</string>
+  <string name="action_cancel">Cancel</string>
+  <string name="action_save">Save</string>
+  <string name="action_add">Add</string>
+  <string name="action_remove">Remove</string>
+  <string name="action_continue">Continue</string>
+  <string name="action_decrease">Decrease</string>
+  <string name="action_increase">Increase</string>
+
+  <string name="nav_home">Home</string>
+  <string name="nav_destinations">Destinations</string>
+  <string name="nav_browse">Browse</string>
+  <string name="nav_activity">Activity</string>
+  <string name="nav_settings">Settings</string>
+
+  <string name="onboarding_title">Welcome to DuoBackup</string>
+  <string name="onboarding_intro">DuoBackup copies the files in your phone\'s shared storage to your own Google Drive and to a private Telegram channel. Nothing is sent anywhere else.</string>
+  <string name="onboarding_storage_title">Access to your files</string>
+  <string name="onboarding_storage_text">To back up photos, downloads and documents, DuoBackup needs access to all files in shared storage.</string>
+  <string name="onboarding_storage_limit">Android does not let any app read Android/data or Android/obb, even with this access. Those folders are never backed up.</string>
+  <string name="onboarding_storage_grant">Allow access to all files</string>
+  <string name="onboarding_storage_granted">Access to files is allowed</string>
+  <string name="onboarding_notifications_title">Notifications</string>
+  <string name="onboarding_notifications_text">A notification shows progress while a backup runs and lets you stop it.</string>
+  <string name="onboarding_notifications_grant">Allow notifications</string>
+  <string name="onboarding_notifications_granted">Notifications are allowed</string>
+
+  <string name="home_last_run">Last backup</string>
+  <string name="home_last_run_none">No backup has run yet</string>
+  <string name="home_last_run_running">Started %1$s, still running</string>
+  <string name="home_last_run_detail">%1$s · %2$s</string>
+  <string name="home_next_run">Next backup</string>
+  <string name="home_next_run_none">Not scheduled</string>
+  <string name="home_running">A backup is running</string>
+  <string name="home_pending">Waiting to upload</string>
+  <string name="home_pending_drive">Google Drive: %1$s</string>
+  <string name="home_pending_telegram">Telegram: %1$s</string>
+  <string name="home_destination_off">off</string>
+  <string name="home_quota">Drive storage</string>
+  <string name="home_quota_unknown">Shown once Google Drive is connected</string>
+  <string name="home_back_up_now">Back up now</string>
+  <string name="home_no_destination">No destination is connected yet, so a backup has nothing to upload.</string>
+
+  <string name="result_ok">Finished</string>
+  <string name="result_partial">Partly finished</string>
+  <string name="result_failed">Failed</string>
+  <string name="result_running">Running</string>
+  <string name="trigger_manual">Started by you</string>
+  <string name="trigger_scheduled">Scheduled</string>
+
+  <string name="destinations_drive">Google Drive</string>
+  <string name="destinations_telegram">Telegram</string>
+  <string name="destinations_drive_text">Your personal Google Drive. DuoBackup only sees the files it creates.</string>
+  <string name="destinations_telegram_text">A private channel in your own Telegram account.</string>
+  <string name="destinations_not_connected">Not connected</string>
+  <string name="destinations_coming">Connecting this destination arrives in a later version.</string>
+
+  <string name="browse_root">Shared storage</string>
+  <string name="browse_empty">Nothing here yet. Files appear after the first backup has scanned your storage.</string>
+  <string name="browse_up">Up one folder</string>
+  <plurals name="browse_file_count">
+    <item quantity="one">%d file</item>
+    <item quantity="other">%d files</item>
+  </plurals>
+
+  <string name="activity_empty">No backup has run yet.</string>
+  <string name="activity_uploaded">Uploaded %1$s to Drive, %2$s to Telegram</string>
+  <string name="activity_stop_reason">Reason: %1$s</string>
+  <plurals name="activity_files_hashed">
+    <item quantity="one">%d file checked</item>
+    <item quantity="other">%d files checked</item>
+  </plurals>
+  <plurals name="activity_errors">
+    <item quantity="one">%d error</item>
+    <item quantity="other">%d errors</item>
+  </plurals>
+
+  <string name="settings_section_when">When to back up</string>
+  <string name="settings_schedule">Schedule</string>
+  <string name="settings_schedule_off">Off</string>
+  <string name="settings_schedule_daily">Once a day</string>
+  <string name="settings_schedule_6h">Every 6 hours</string>
+  <string name="settings_wifi_only">Only on Wi-Fi</string>
+  <string name="settings_wifi_only_text">Never use mobile data for backups.</string>
+  <string name="settings_charging_only">Only while charging</string>
+  <string name="settings_charging_only_text">Applies to scheduled backups.</string>
+  <string name="settings_min_battery">Minimum battery</string>
+  <string name="settings_percent">%1$d%%</string>
+  <string name="settings_section_what">What to back up</string>
+  <string name="settings_folders">Folders</string>
+  <string name="settings_folders_all">All of shared storage</string>
+  <string name="settings_folders_choose">Choose folders</string>
+  <string name="settings_folders_none">No folders found. Allow access to files first.</string>
+  <string name="settings_excludes">Skipped paths</string>
+  <string name="settings_excludes_text">Patterns for files and folders to leave out. * matches within a name, ** matches across folders.</string>
+  <string name="settings_excludes_add_hint">Pattern, for example **/*.iso</string>
+  <string name="settings_excludes_reset">Restore defaults</string>
+  <string name="settings_fixed_excludes">Android/data and Android/obb are always skipped: Android does not let apps read them.</string>
+  <string name="settings_volumes">Storage volumes</string>
+  <string name="settings_volume_primary">%1$s (backed up)</string>
+  <string name="settings_volume_removable">%1$s (removable storage is not supported yet)</string>
+  <string name="settings_section_keep">How long to keep</string>
+  <string name="settings_retention_days">Keep old versions for</string>
+  <plurals name="settings_days">
+    <item quantity="one">%d day</item>
+    <item quantity="other">%d days</item>
+  </plurals>
+  <string name="settings_snapshot_keep">Index snapshots to keep</string>
+  <string name="settings_section_encryption">Encryption</string>
+  <string name="settings_encryption">Encrypt backups</string>
+  <string name="settings_encryption_text">Arrives in a later version. Backups are not encrypted yet.</string>
 </resources>

@@ -38,7 +38,7 @@ two disagree. Raise any disagreement in the Decision Log (§10) rather than igno
 |---|---|---|---|
 | M0 | Repository, build and CI skeleton | `ci/skeleton` | done |
 | M1 | Core library: formats, math, codecs | `feat/core-formats` | done |
-| M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | todo |
+| M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | done (device check S7 and signing S1 pending) |
 | M3 | Google Drive destination | `feat/drive-destination` | todo |
 | M4 | Backup engine (scan, hash, queue, upload, snapshot) | `feat/backup-engine` | todo |
 | M5 | Restore with layered verification | `feat/restore` | todo |
@@ -804,7 +804,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
 
 **Steps**
 
-- [ ] **M2.1 Room catalog** in `:app` (`data.db` package).
+- [x] **M2.1 Room catalog** in `:app` (`data.db` package).
   - Write entities and DAOs exactly per §3, with `@Database(version = 1, exportSchema = true)`
     and the KSP arg `room.schemaLocation`.
   - `RoomCatalog : Catalog` is the only class the engine sees.
@@ -817,7 +817,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
     - unreferenced contents
   - Tests: Robolectric DAO tests on an in-memory DB covering every query, plus a test that the
     exported schema JSON matches the committed one.
-- [ ] **M2.2 Settings** (DataStore Preferences, `SettingsRepository`). Keys and defaults:
+- [x] **M2.2 Settings** (DataStore Preferences, `SettingsRepository`). Keys and defaults:
 
   | key | default |
   |---|---|
@@ -837,7 +837,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   | `tg_storage_chat_id` | none |
 
   Settings are exposed as a `Flow<Settings>`.
-- [ ] **M2.3 Secrets** (`SecretStore`). Tink `AeadConfig.register()` and
+- [x] **M2.3 Secrets** (`SecretStore`). Tink `AeadConfig.register()` and
   `AndroidKeysetManager` with the master key URI `android-keystore://duobackup_master`, keyset
   stored in its own prefs file. It encrypts:
   - Telegram `api_id`/`api_hash`
@@ -847,7 +847,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   The API is `put(name, bytes)`, `get(name)` and `delete(name)`. The value AAD = name.
   Tests (Robolectric where the Keystore is available, otherwise a fake): round-trip,
   tampering is detected, and deleting a key removes it.
-- [ ] **M2.4 All Files Access flow.**
+- [x] **M2.4 All Files Access flow.**
   - Add `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
     tools:ignore="ScopedStorage"/>`.
   - Check: `Environment.isExternalStorageManager()`.
@@ -856,7 +856,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   - Re-check in `onResume`.
   - **Honesty note in the UI:** on Android 11+ even All Files Access cannot read
     `Android/data` and `Android/obb`, so they are always excluded and the UI says so.
-- [ ] **M2.5 `AndroidSourceFileSystem : SourceFileSystem`.**
+- [x] **M2.5 `AndroidSourceFileSystem : SourceFileSystem`.**
   - Walk `Environment.getExternalStorageDirectory()` (volume `primary`) with
     `java.nio.file.Files.walkFileTree`. Do not follow symlinks.
   - Skip unreadable entries with a counted warning, not a failure.
@@ -875,7 +875,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
     - `DuoBackup Restore/**` (the restore output folder from M5)
   - Removable volumes come from `StorageManager.storageVolumes` and are listed in settings
     but disabled by default (Deferred: §9).
-- [ ] **M2.6 UI skeleton** (Compose, Navigation), with screen state as `StateFlow` in Hilt
+- [x] **M2.6 UI skeleton** (Compose, Navigation), with screen state as `StateFlow` in Hilt
   ViewModels.
   - Screens:
     - **Onboarding**: explains, requests All Files Access, requests notifications.
@@ -887,7 +887,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
       (folder list from the walker, not SAF).
     - **Activity log**: the `runs` table.
   - All strings go in `res/values/strings.xml`. Plurals use `plurals`.
-- [ ] **M2.7 Worker scaffold.**
+- [x] **M2.7 Worker scaffold.**
   - `BackupWorker : CoroutineWorker` (`@HiltWorker`) with unique work names
     `duobackup.backup.periodic` and `duobackup.backup.now` (`ExistingWorkPolicy.KEEP`).
   - Constraints come from settings: network `UNMETERED` or `CONNECTED`, `requiresCharging`,
@@ -910,7 +910,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
   - For now the worker body calls a no-op `BackupSession` and writes a `runs` row.
   - Tests: a WorkManager test driver (`work-testing`) checks constraints mapping and unique
     work behaviour.
-- [ ] **M2.8 Release signing in CI.**
+- [x] **M2.8 Release signing in CI.**
   - The `release` build type reads signing config from env vars (`SIGNING_*`). If they are
     absent, the `assembleRelease` task is skipped and the build does not fail.
   - Add a CI job `release-apk`:
@@ -1926,3 +1926,30 @@ Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
 - **D16 (2026-11-10, M1):** `PartSizing.maxPlainPartSize` throws when a limit leaves no room
   for a 1 MiB part, rather than returning 0 — a zero part size would only fail later, in the
   layout step.
+- **D17 (2026-11-10, M2):** Android 8 to 10 use `READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE`
+  (declared with `maxSdkVersion="29"`, plus `requestLegacyExternalStorage`) — All Files Access
+  only exists from Android 11, and `minSdk` is 26.
+- **D18 (2026-11-10, M2):** `Catalog`, `SourceFileSystem` and `BackupSession` were added to
+  `:core` in M2, because M1.1 did not list them. `SourceFileSystem.walk` takes a visitor and
+  returns a summary instead of a `Sequence` — `walkFileTree` is callback-based and the count
+  of unreadable entries has to come back. The walking logic is `DirectorySource` in `:core`,
+  so it is tested on the JVM.
+- **D19 (2026-11-10, M2):** Robolectric tests run against SDK 35 — its SDK 36 image needs
+  Java 21 and the toolchain is locked at 17. `SecretStore` tests use a real Tink AES-256-GCM
+  key held in memory, since the Android Keystore does not exist on the JVM.
+- **D20 (2026-11-10, M2):** the schema check is a CI step (`git diff --exit-code` on
+  `app/app/schemas` after the build) plus a test comparing the running database's identity
+  hash with the exported JSON — a unit test alone cannot see a stale committed schema,
+  because the build rewrites the file before tests run.
+- **D21 (2026-11-10, M2):** Wi-Fi-only applies to every run, manual ones included; charging
+  and battery rules apply to unattended runs only. WorkManager only offers "battery not low",
+  so `min_battery_pct` is stored but its exact threshold is enforced by the engine in M4.
+- **D22 (2026-11-10, M2):** follow-up runs use a third unique work name,
+  `duobackup.backup.followup` — enqueueing under `duobackup.backup.now` with `KEEP` from
+  inside that same running work would be dropped.
+- **D23 (2026-11-10, M2):** the `release-apk` job ends with a notice, not a failure, while the
+  signing secrets are missing, so `main` stays green before S1. The decoded keystore path is
+  passed to Gradle as `SIGNING_KEYSTORE_FILE`.
+- **D24 (2026-11-10, M2):** the encryption switch is shown disabled until M8, and the
+  `encryption_enabled` setting cannot be turned on from the UI — offering it earlier would
+  claim protection the app does not give yet.

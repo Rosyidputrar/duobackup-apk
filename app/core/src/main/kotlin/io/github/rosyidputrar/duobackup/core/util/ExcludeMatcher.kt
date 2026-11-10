@@ -60,7 +60,8 @@ class ExcludeMatcher(globs: List<String>) {
             "**/*.tmp",
             "**/*.part",
             "**/*.duobackup-part",
-            "**/.nomedia"
+            "**/.nomedia",
+            "DuoBackup Restore/**"
         )
     }
 }
