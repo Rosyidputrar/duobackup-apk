@@ -36,7 +36,7 @@ two disagree. Raise any disagreement in the Decision Log (§10) rather than igno
 
 | Milestone | Title | Branch | Status |
 |---|---|---|---|
-| M0 | Repository, build and CI skeleton | `ci/skeleton` | todo |
+| M0 | Repository, build and CI skeleton | `ci/skeleton` | done (device check S7 pending) |
 | M1 | Core library: formats, math, codecs | `feat/core-formats` | todo |
 | M2 | Android shell: catalog DB, settings, permissions | `feat/android-shell` | todo |
 | M3 | Google Drive destination | `feat/drive-destination` | todo |
@@ -644,7 +644,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
   - Pin actions to major versions (`@v4`, etc.).
 - [x] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
   `/app`) and `github-actions` (directory `/`), weekly, grouped minor/patch updates.
-- [ ] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
+- [x] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
   the debug APK from the Actions artifacts, and a link to `plan.md`.
 
 **Acceptance**
@@ -1901,3 +1901,13 @@ Append-only. Format: `D<n> (YYYY-MM-DD, milestone): decision — reason`.
   (`is_premium`, `getApplicationConfig` → `upload_max_fileparts_*`,
   `message_caption_length_max`), and so is the Drive quota (`about.storageQuota`) — accounts
   differ and change over time; constants are fallbacks only.
+- **D8 (2026-11-10, M0):** `compileSdk`/`targetSdk` are 37, not the 36 written when the plan was
+  drafted — API 37 is the latest stable platform and AGP 9.5.1 supports it.
+- **D9 (2026-11-10, M0):** `:core` and `:drive` test on JUnit 6 (Jupiter), not JUnit 5 — it is
+  the latest stable release of the same API line; the test API is unchanged.
+- **D10 (2026-11-10, M0):** Android modules do not apply the `kotlin-android` plugin — AGP 9
+  compiles Kotlin itself (built-in Kotlin); the Kotlin version is still pinned in the catalog
+  through the Compose and serialization compiler plugins.
+- **D11 (2026-11-10, M0):** CI sets `cache-provider: basic` on `gradle/actions/setup-gradle` —
+  the v6 default is a proprietary caching service; the basic provider is the open-source one
+  built on `actions/cache`.

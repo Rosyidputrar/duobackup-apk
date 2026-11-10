@@ -51,7 +51,7 @@ Do not change these without the owner explicitly asking.
 | Area | Decision |
 |---|---|
 | Language | Kotlin (latest stable 2.x), JVM toolchain 17 |
-| Android | `minSdk 26`, `compileSdk`/`targetSdk` = latest stable (currently 36) |
+| Android | `minSdk 26`, `compileSdk`/`targetSdk` = latest stable (currently 37) |
 | Package | `io.github.rosyidputrar.duobackup` |
 | UI | Jetpack Compose + Material 3, single activity |
 | DI | Hilt |
