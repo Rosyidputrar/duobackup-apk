@@ -887,7 +887,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
       (folder list from the walker, not SAF).
     - **Activity log**: the `runs` table.
   - All strings go in `res/values/strings.xml`. Plurals use `plurals`.
-- [ ] **M2.7 Worker scaffold.**
+- [x] **M2.7 Worker scaffold.**
   - `BackupWorker : CoroutineWorker` (`@HiltWorker`) with unique work names
     `duobackup.backup.periodic` and `duobackup.backup.now` (`ExistingWorkPolicy.KEEP`).
   - Constraints come from settings: network `UNMETERED` or `CONNECTED`, `requiresCharging`,
