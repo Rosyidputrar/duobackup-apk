@@ -22,14 +22,18 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // -PregenerateGolden lifts @Disabled so GoldenGenerator can write missing golden files.
+    if (providers.gradleProperty("regenerateGolden").isPresent) {
+        systemProperty("junit.jupiter.conditions.deactivate", "org.junit.*DisabledCondition")
+        systemProperty("golden.dir", layout.projectDirectory.dir("src/test/resources/golden").asFile.path)
+    }
 }
 
 kover {
     reports {
         verify {
             rule {
-                // Raised to 80 in M1.6, once :core has real logic to cover.
-                minBound(0)
+                minBound(80)
             }
         }
     }

@@ -760,7 +760,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
   - `DriveProps.part(...)`, `DriveProps.index(...)` and friends. Each returns
     `Map<String, String>` and asserts that every key+value pair is ≤ 120 UTF-8 bytes. Tests
     cover the worst case: a 64-hex oid, a large part index, and a 64-hex ph.
-- [ ] **M1.6 Golden vectors.**
+- [x] **M1.6 Golden vectors.**
   - `core/src/test/resources/golden/` holds:
     - `dbe1-*.bin` (fixed key and salt) with their `.plain` inputs
     - `keyfile-v1.json` (fixed passphrase "correct horse battery staple", fixed salt and

@@ -1,0 +1,1 @@
+{"format":"duobackup-key","v":1,"keyId":"49c06045b5675e63","kdf":{"alg":"PBKDF2-HMAC-SHA256","iter":1000,"salt":"QEFCQ0RFRkdISUpLTE1OTw=="},"wrap":{"alg":"AES-256-GCM","nonce":"UFFSU1RVVldYWVpb","ct":"hWXrNXP9c2k+Aac1MGhEYTW/0PqZd41qYXWTfGl/00uruHH2ltMaYimwl4grosq/"},"createdAt":1762758000000}
