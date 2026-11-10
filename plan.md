@@ -875,7 +875,7 @@ screen skeleton plus a worker scaffold that later milestones fill in.
     - `DuoBackup Restore/**` (the restore output folder from M5)
   - Removable volumes come from `StorageManager.storageVolumes` and are listed in settings
     but disabled by default (Deferred: §9).
-- [ ] **M2.6 UI skeleton** (Compose, Navigation), with screen state as `StateFlow` in Hilt
+- [x] **M2.6 UI skeleton** (Compose, Navigation), with screen state as `StateFlow` in Hilt
   ViewModels.
   - Screens:
     - **Onboarding**: explains, requests All Files Access, requests notifications.
