@@ -642,7 +642,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
         (retention 14 days)
     11. on failure: upload `**/build/reports/**` as artifact `reports`.
   - Pin actions to major versions (`@v4`, etc.).
-- [ ] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
+- [x] **M0.7 Dependabot.** Add `.github/dependabot.yml`: ecosystems `gradle` (directory
   `/app`) and `github-actions` (directory `/`), weekly, grouped minor/patch updates.
 - [ ] **M0.8 README.md.** One paragraph on what the project is, the repo layout, how to get
   the debug APK from the Actions artifacts, and a link to `plan.md`.
