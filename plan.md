@@ -623,7 +623,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
   - Android lint: `abortOnError = true`, `checkDependencies = true`, no baseline file.
   - Kover on `:core` and `:drive` with a verify rule of **≥ 80 % line coverage** (enforced
     from M1; set the rule now with `minBound(0)` and raise it in M1.6).
-- [ ] **M0.6 `.github/workflows/android.yml`.**
+- [x] **M0.6 `.github/workflows/android.yml`.**
   - Triggers: `pull_request` and `push` to `main`, with paths `app/**` and
     `.github/workflows/android.yml`; also `workflow_dispatch`.
   - `concurrency: android-${{ github.ref }}` with `cancel-in-progress: true`.
