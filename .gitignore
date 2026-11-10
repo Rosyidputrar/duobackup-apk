@@ -1,0 +1,30 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.keystore
+*.jks
+captures/
+.kotlin/
+.cxx/
+*.apk
+*.aab
+
+# IDE
+.idea/*
+!.idea/runConfigurations/
+*.iml
+
+# Node
+node_modules/
+dist/
+
+# Secrets and session files
+*.session
+google-services.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*~

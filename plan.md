@@ -562,7 +562,7 @@ lints and tests on every PR, and that produces a debug APK artifact.
 
 **Steps**
 
-- [ ] **M0.1 Repo hygiene.**
+- [x] **M0.1 Repo hygiene.**
   - Add `.gitignore`. It must cover:
     - Android/Gradle (`.gradle/`, `build/`, `local.properties`, `*.keystore`, `*.jks`,
       `captures/`, `.idea/` except shared run configs)
