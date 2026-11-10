@@ -791,4 +791,386 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
 - Every format in §4 has a golden test.
 - No Android imports appear in `:core` (CI step: `! grep -r "import android" core/src`).
 
+---
+
+### M2 — Android shell: catalog DB, settings, permissions
+
+**Branch:** `feat/android-shell`. **Needs:** S1 (signing secrets) for step M2.8.
+
+**Goal:** the app can obtain All Files Access, persists the catalog and settings, and has the
+screen skeleton plus a worker scaffold that later milestones fill in.
+
+**Steps**
+
+- [ ] **M2.1 Room catalog** in `:app` (`data.db` package).
+  - Write entities and DAOs exactly per §3, with `@Database(version = 1, exportSchema = true)`
+    and the KSP arg `room.schemaLocation`.
+  - `RoomCatalog : Catalog` is the only class the engine sees.
+  - Batch inserts happen inside transactions.
+  - DAO queries needed later:
+    - files by state
+    - pending parts per destination
+    - content completeness per destination
+    - versions live at time T
+    - unreferenced contents
+  - Tests: Robolectric DAO tests on an in-memory DB covering every query, plus a test that the
+    exported schema JSON matches the committed one.
+- [ ] **M2.2 Settings** (DataStore Preferences, `SettingsRepository`). Keys and defaults:
+
+  | key | default |
+  |---|---|
+  | `drive_enabled` | false |
+  | `telegram_enabled` | false |
+  | `wifi_only` | true |
+  | `charging_only` | false |
+  | `min_battery_pct` | 20 |
+  | `schedule` | `DAILY` (`OFF`/`DAILY`/`EVERY_6H`) |
+  | `include_roots` | `[""]` (whole primary volume) |
+  | `excludes` | default list in M2.5 |
+  | `encryption_enabled` | false |
+  | `retention_days` | 30 |
+  | `snapshot_keep` | 10 |
+  | `install_uuid` | generated on first launch |
+  | `drive_folder_ids` | JSON cache |
+  | `tg_storage_chat_id` | none |
+
+  Settings are exposed as a `Flow<Settings>`.
+- [ ] **M2.3 Secrets** (`SecretStore`). Tink `AeadConfig.register()` and
+  `AndroidKeysetManager` with the master key URI `android-keystore://duobackup_master`, keyset
+  stored in its own prefs file. It encrypts:
+  - Telegram `api_id`/`api_hash`
+  - the TDLib database encryption key (32 random bytes)
+  - the wrapped `masterKey` (M8)
+
+  The API is `put(name, bytes)`, `get(name)` and `delete(name)`. The value AAD = name.
+  Tests (Robolectric where the Keystore is available, otherwise a fake): round-trip,
+  tampering is detected, and deleting a key removes it.
+- [ ] **M2.4 All Files Access flow.**
+  - Add `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+    tools:ignore="ScopedStorage"/>`.
+  - Check: `Environment.isExternalStorageManager()`.
+  - Request: `Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION` with `package:` URI,
+    falling back to `ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION`.
+  - Re-check in `onResume`.
+  - **Honesty note in the UI:** on Android 11+ even All Files Access cannot read
+    `Android/data` and `Android/obb`, so they are always excluded and the UI says so.
+- [ ] **M2.5 `AndroidSourceFileSystem : SourceFileSystem`.**
+  - Walk `Environment.getExternalStorageDirectory()` (volume `primary`) with
+    `java.nio.file.Files.walkFileTree`. Do not follow symlinks.
+  - Skip unreadable entries with a counted warning, not a failure.
+  - Default excludes:
+    - `Android/data/**`
+    - `Android/obb/**`
+    - `**/.thumbnails/**`
+    - `**/.cache/**`
+    - `**/cache/**`
+    - `**/.trash*/**`
+    - `**/.Trash*/**`
+    - `**/*.tmp`
+    - `**/*.part`
+    - `**/*.duobackup-part`
+    - `**/.nomedia`
+    - `DuoBackup Restore/**` (the restore output folder from M5)
+  - Removable volumes come from `StorageManager.storageVolumes` and are listed in settings
+    but disabled by default (Deferred: §9).
+- [ ] **M2.6 UI skeleton** (Compose, Navigation), with screen state as `StateFlow` in Hilt
+  ViewModels.
+  - Screens:
+    - **Onboarding**: explains, requests All Files Access, requests notifications.
+    - **Home**: last run, next run, pending bytes per destination, quota, a "Back up now"
+      button, the current run's progress.
+    - **Destinations**: Drive card, Telegram card (placeholders now).
+    - **Browse**: file tree from the catalog; restore actions come in M5.
+    - **Settings**: everything in M2.2, plus an exclude editor and an include-roots picker
+      (folder list from the walker, not SAF).
+    - **Activity log**: the `runs` table.
+  - All strings go in `res/values/strings.xml`. Plurals use `plurals`.
+- [ ] **M2.7 Worker scaffold.**
+  - `BackupWorker : CoroutineWorker` (`@HiltWorker`) with unique work names
+    `duobackup.backup.periodic` and `duobackup.backup.now` (`ExistingWorkPolicy.KEEP`).
+  - Constraints come from settings: network `UNMETERED` or `CONNECTED`, `requiresCharging`,
+    `requiresBatteryNotLow`.
+  - Calls `setForeground(ForegroundInfo(id, notification, FOREGROUND_SERVICE_TYPE_DATA_SYNC))`
+    before any long work.
+  - The manifest declares `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC`,
+    `POST_NOTIFICATIONS` and `INTERNET`.
+  - The manifest also merges the service declaration for
+    `androidx.work.impl.foreground.SystemForegroundService` with
+    `android:foregroundServiceType="dataSync"` (`tools:node="merge"`).
+  - **Time budget:** the default run budget is **45 min**.
+    - Android 15+ caps `dataSync` foreground services at about 6 h per 24 h. Handle
+      `onStopped`/the timeout by finishing the current part and committing.
+    - When the queue is non-empty at the end, enqueue a follow-up one-time run with a 15-min
+      initial delay (counts toward the cap; the engine just resumes).
+  - The notification channel is `backup`, low importance. It shows progress
+    (bytes/total and the current file name only at debug log level) and has a "Stop" action
+    (`WorkManager.cancelUniqueWork`).
+  - For now the worker body calls a no-op `BackupSession` and writes a `runs` row.
+  - Tests: a WorkManager test driver (`work-testing`) checks constraints mapping and unique
+    work behaviour.
+- [ ] **M2.8 Release signing in CI.**
+  - The `release` build type reads signing config from env vars (`SIGNING_*`). If they are
+    absent, the `assembleRelease` task is skipped and the build does not fail.
+  - Add a CI job `release-apk`:
+    - Runs only on `push` to `main` and tags `v*`.
+    - Decodes `SIGNING_KEYSTORE_BASE64` to a temp file.
+    - Runs `./gradlew assembleRelease`.
+    - Prints the signing certificate SHA-1 (`keytool -list -v`; needed for S3).
+    - Uploads `duobackup-release-apk`.
+  - Add R8 (`isMinifyEnabled = true`, `isShrinkResources = true`) with keep rules for
+    kotlinx.serialization and TDLib (added in M6).
+
+**Acceptance**
+
+- CI is green, including the new Room and worker tests.
+- On a device (S7):
+  - Onboarding grants All Files Access.
+  - The Browse screen is empty but works.
+  - "Back up now" shows the foreground notification and creates an activity-log row.
+  - Settings persist across restarts.
+
+---
+
+### M3 — Google Drive destination
+
+**Branch:** `feat/drive-destination`. **Needs:** S2 and S3 (Google Cloud project + Android
+OAuth client).
+
+**Goal:** a complete `DriveTransport` in `:drive`, fully tested against MockWebServer, plus
+the connect/disconnect flow in `:app`.
+
+**Steps**
+
+- [ ] **M3.1 `DriveApi`** (OkHttp, kotlinx.serialization). A thin REST client, base
+  `https://www.googleapis.com` (injectable for tests). Operations:
+  - `about(fields = "user(emailAddress),storageQuota")`, which gives `limit` (may be absent =
+    unlimited), `usage` and `usageInDrive`.
+  - `listFiles(q, fields, pageToken, pageSize = 1000)` with paging helper.
+  - `createFolder(name, parentId?, appProperties)`.
+  - `getFile(id, fields)`.
+  - `updateFile(id, metadata)`.
+  - `deleteFile(id)`.
+  - `download(id, target, rangeStart?)` (`alt=media`, `Range` header for resume).
+
+  Every request adds `Authorization: Bearer <token>` from `AccessTokenProvider`. On **401**,
+  invalidate the token once, fetch a new one and retry once. A second 401 throws
+  `AuthRequired`.
+- [ ] **M3.2 Error mapping** (a single function, unit-tested with recorded JSON error bodies):
+
+  | Response | Result |
+  |---|---|
+  | 403 with reason `userRateLimitExceeded` or `rateLimitExceeded` | `RateLimited(backoff)` |
+  | 429 | `RateLimited` (honour `Retry-After` if present) |
+  | 403 with reason `storageQuotaExceeded` or `quotaExceeded` | `QuotaExceeded` |
+  | 403 with reason `insufficientPermissions` / `appNotAuthorizedToFile` | `AuthRequired` |
+  | 404 | `NotFound` |
+  | 5xx, `IOException`, timeout | `Transient` |
+  | other 4xx | `Permanent` |
+
+  **The access token must never appear in exception messages or logs.** Add a test that
+  asserts this by scanning exception strings.
+- [ ] **M3.3 `ResumableUploader`** (§7.3 of `info.md`, §4.4 here).
+  - `open(metadata, totalBytes)` sends `POST /upload/drive/v3/files?uploadType=resumable&fields=id,size,md5Checksum`
+    with headers `X-Upload-Content-Type: application/octet-stream` and
+    `X-Upload-Content-Length`, and takes the session URI from `Location`. Persist it
+    immediately in `drive_sessions` (through a callback interface; `:drive` does not know
+    Room).
+  - `queryOffset(uri, total)` sends `PUT` with `Content-Range: bytes */total`.
+    - 308 with `Range: bytes=0-n` gives n+1.
+    - 308 without `Range` gives 0.
+    - 200/201 means already complete; parse the file.
+    - 404/410 gives `SessionGone`.
+  - `putChunk(uri, file, offset, length, total)` streams from the file with a
+    `RequestBody` that does not load into memory.
+    - Chunk length is a multiple of 262,144 bytes except the final one.
+    - **Adaptive size:** start at 1 MiB, target 10 s per chunk, then clamp to
+      `[256 KiB, 64 MiB]`, rounded down to 256 KiB.
+    - The MD5 is updated as bytes are confirmed. On resume after a crash, it is recomputed
+      from the scratch file up to the confirmed offset.
+  - Driver loop: offset = queryOffset; loop putChunk.
+    - After each chunk, take the new offset from the 308 `Range` header (the server may
+      accept less than was sent).
+    - Reset `failures` to 0 after every chunk that advances.
+    - On `Transient`/`RateLimited`, wait with `Backoff` and re-query the offset.
+    - Stop after 100 consecutive failures or when the session is stale (> 6 days).
+    - On `SessionGone` or other 4xx, open a new session from 0.
+  - Completion: the response gives `id`, `size` and `md5Checksum`. Verify them against the
+    scratch file; on mismatch, delete the remote file and throw `Transient`.
+  - Tests with MockWebServer and scripted responses:
+    - happy path, multiple chunks
+    - the server accepts a shorter range than was sent
+    - crash and resume using a persisted URI
+    - 404 during the query restarts from zero
+    - 503s trigger backoff (virtual time via `runTest`)
+    - 403 rate limit, then success
+    - 403 storage quota gives `QuotaExceeded`
+    - MD5 mismatch deletes the remote file and retries
+    - every non-final chunk length is a multiple of 256 KiB (assert on recorded requests)
+- [ ] **M3.4 `DriveLayout`.** It finds or creates `DuoBackup/`, `data/`, `index/` and `key/`
+  via `appProperties` queries (§4.4).
+  - Query by property, never by name. The root query also matches `install` *or* any
+    DuoBackup root. If more than one root is found, pick the one with the newest index and
+    report the others in `PrepareResult.warnings`.
+  - Folder ids are cached in settings and re-resolved once on 404.
+- [ ] **M3.5 `DriveTransport : BackupTransport`.**
+  - `prepare` checks the token, resolves the layout and reads `about`.
+  - `limits` returns `maxFileBytes = 5 TB`, `quotaFreeBytes = limit - usage` (null if
+    unlimited), and `captionMax = n/a`.
+  - `uploadPart` uses `ResumableUploader` with `DriveProps.part`, parent `data/`, name per
+    §4.1. It returns `RemoteLocation.Drive(id)`.
+  - `downloadPart` writes to `target`, resumes with `Range` when `target` exists, and checks
+    that the final size equals `stored_size`.
+  - `checkPart` uses `getFile(id, "id,size,trashed")`. Missing or trashed gives `MISSING`.
+  - `putIndex`/`listIndexes`/`getIndex`/`deleteIndex` work on `index/` with
+    `DriveProps.index`.
+  - Key file operations are stubbed to `UnsupportedOperationException` until M8.
+  - Tests: transport-level tests over MockWebServer, including the layout bootstrap from an
+    empty Drive and from an existing one.
+- [ ] **M3.6 Google authorization in `:app`** (`GoogleAuthManager : AccessTokenProvider`).
+  - Use `Identity.getAuthorizationClient(context).authorize(AuthorizationRequest` with
+    requested scope `https://www.googleapis.com/auth/drive.file`.
+  - If `result.hasResolution()`, launch `result.pendingIntent` through
+    `ActivityResultContracts.StartIntentSenderForResult` (UI only), then call
+    `getAuthorizationResultFromIntent`.
+  - Otherwise use `result.accessToken`.
+  - In the worker, call `authorize` again with the application context.
+    - A silent success gives a fresh token.
+    - If a resolution is needed (the user revoked access), throw `AuthRequired`. The
+      destination is then paused and a notification "Reconnect Google Drive" is posted,
+      deep-linking to the Destinations screen.
+  - Cache the token in memory with its expiry (assume 55 min if unknown). Never persist it.
+  - Disconnect revokes access (use the client's revoke API if available in the pinned
+    version, otherwise the OAuth revoke endpoint with the token) and clears the cached
+    folder ids. Remote data is not touched.
+  - Verify the exact API surface against the pinned `play-services-auth` version and record
+    any difference in the Decision Log.
+- [ ] **M3.7 Destinations UI for Drive.**
+  - The card shows the connected account email, quota (used / limit, "Unlimited" when no
+    limit), the folder status, and buttons for Connect / Disconnect / "Test upload".
+  - "Test upload" sends a 1 MiB random part to `data/` with `appProperties.db = "probe"`,
+    reads it back, compares SHA-256 and deletes it. It shows the result and throughput.
+
+**Acceptance**
+
+- CI is green, and Kover on `:drive` is at least 80 %.
+- On a device (S7):
+  - Connect works.
+  - The quota is shown.
+  - Test upload passes.
+  - Disconnect and reconnect works.
+  - Turning on airplane mode during the test upload, then off again, resumes the upload
+    rather than restarting it (check the log).
+
+---
+
+### M4 — Backup engine
+
+**Branch:** `feat/backup-engine`. It can be split into `feat/engine-scan-hash` and
+`feat/engine-upload`.
+
+**Goal:** `BackupSession` in `:core` implementing the §2.3 pipeline for any set of
+`BackupTransport`s, wired into `BackupWorker`, with Drive as the first real destination.
+
+**Steps**
+
+- [ ] **M4.1 Test fakes in `:core` test fixtures** (`java-test-fixtures` plugin, so `:app`
+  tests can reuse them):
+  - `InMemoryCatalog`
+  - `FakeFileSystem`: a tree of entries with size, mtime and content generator; supports
+    mutating between scans.
+  - `FakeTransport`: in-memory storage with scriptable failures (rate limit after N parts,
+    quota exceeded at X bytes, transient every k-th call, missing parts, corrupted download
+    bytes).
+  - `FakeClock`
+  - `TempScratchSpace`
+- [ ] **M4.2 `Scanner`.**
+  - Walks the roots, applies the `ExcludeMatcher`, and diffs against the catalog in batches
+    of 500 inside one transaction per batch.
+  - Size or mtime changed, or a new path, gives `NEEDS_HASH`. Unchanged files get
+    `last_seen_scan` updated.
+  - After a full root walk, the scan is marked complete, and paths with
+    `last_seen_scan < scan.id` get `DELETED` and their current version `superseded_at = now`.
+  - Tests:
+    - new, changed (size), changed (mtime only), unchanged, deleted
+    - an incomplete scan (walker throws mid-way) applies no deletions
+    - exclude handling
+- [ ] **M4.3 Hash stage.**
+  - Processes `NEEDS_HASH` files older than 45 s (by `Clock`), one at a time. Files that
+    are too fresh wait until the next run.
+  - Re-stat after hashing. If the file changed, leave it as `NEEDS_HASH`.
+  - Read errors set `ERROR` with a code (`EACCES`, `ENOENT`, `EIO`) and do not abort the run.
+  - Tests: a file mutated during hashing, a file deleted between scan and hash, and the
+    settle-time behaviour.
+- [ ] **M4.4 `Planner`.**
+  - For each newly hashed file:
+    1. Look up `contents` by sha256. If missing, create it with a layout from
+       `PartSizing.choose` (enabled destinations' detected limits), `encrypted` = current
+       setting, and `oid` per §4.1.
+    2. Insert the `file_versions` row (supersede the previous current version).
+  - Pending work per destination is all `content_parts` of LIVE contents referenced by a live
+    version that have no `part_locations` row for that destination.
+  - Order is smallest content first, then oldest `first_seen`, so many small files finish
+    early.
+  - Tests:
+    - two identical files give one content
+    - a changed file gives a new content and a superseded version
+    - a file reverted to an old hash reuses the old content, and no upload is needed
+    - enabling a second destination later makes all existing parts pending for it only
+- [ ] **M4.5 `PartProducer` and scratch handling** (§2.5).
+  - Opens the source at `plain_offset` and copies `plain_size` bytes into the scratch file
+    `<scratchDir>/<oid16>.<pi>.dbp`, hashing as it goes.
+  - If the hash differs from `part_sha256`, the source changed after planning. Discard the
+    scratch, mark the file `NEEDS_HASH` and skip the part. Encryption is added in M8.
+  - Free-space check before producing.
+  - The scratch directory is `context.noBackupFilesDir/scratch`. It is cleaned at session
+    start, except files referenced by `drive_sessions`.
+- [ ] **M4.6 `Uploader`** (one per destination, run concurrently per §2.5).
+  - For each pending part, call `transport.uploadPart`, then **in one transaction** insert
+    `part_locations` and remove any `drive_sessions` row.
+  - Exceptions are handled by `RetryPolicy`:
+    - `RetryAfter`: wait, then retry the same part (the Telegram pacer applies its own
+      global wait).
+    - `Backoff`: retry up to 5 times, then move on and leave the part pending.
+    - `PauseDest`: pause this destination for the run and record the reason.
+    - `FailItem`: record the error and continue.
+  - Before uploading a part, check `limits.quotaFreeBytes` (when known) against `stored_size`.
+    If it does not fit, pause with `QUOTA`.
+  - Respects the time budget.
+  - Tests: everything with `FakeTransport` failure scripts, plus a property test that kills
+    the session at a random point, restarts it, and checks that every part ends up uploaded
+    **exactly once** (no duplicates in `FakeTransport`) and that no part is recorded without
+    being stored.
+- [ ] **M4.7 `SnapshotWriter`.**
+  - Builds `IndexSnapshot` from the catalog (§4.5) and streams it through
+    `IndexSnapshotCodec` into a scratch file.
+  - Calls `putIndex` on each prepared destination, records the `snapshots` row, then rotates:
+    deletes remote and local snapshot rows beyond `snapshot_keep`.
+  - Runs even when the session stopped on budget.
+  - Tests: snapshot content equals the catalog state, `pendingParts` is correct, and rotation
+    keeps N.
+- [ ] **M4.8 `BackupSession` orchestration and progress.**
+  - Emits `StateFlow<SessionProgress>`: stage, files scanned/hashed, bytes done/total per
+    destination, current pause reasons, ETA (EWMA throughput).
+  - Writes the `runs` row on start and end.
+  - Cancellation-safe: on `CancellationException`, it commits nothing partial beyond what the
+    invariants already guarantee, and rethrows.
+- [ ] **M4.9 Wiring.**
+  - `BackupWorker` builds the session from the enabled destinations (only Drive for now),
+    with a 45-min budget.
+  - The Home screen binds to progress through a `ProgressRepository` (a process-wide
+    `StateFlow` that the worker publishes to).
+  - Schedule changes re-enqueue periodic work.
+- [ ] **M4.10 Pre-run estimate.** The Home screen shows "X files, Y GB pending for Drive (free
+  space Z GB)", plus a warning when Y > Z.
+
+**Acceptance**
+
+- CI is green, and Kover on `:core` stays at least 80 %.
+- On a device (S7), with Drive enabled, a folder of mixed files (including one > 600 MB) is
+  backed up.
+- A second run uploads nothing.
+- After one file is modified, only it is uploaded.
+- Killing the app during a large upload resumes it on the next run without restarting.
+- The snapshot file appears in `DuoBackup/index/`.
+
 <!-- plan:continue -->
