@@ -774,7 +774,7 @@ Package root: `io.github.rosyidputrar.duobackup.core`, sub-packages `model`, `tr
     documented in a comment. The same files are consumed by the web tests in M10, which keeps
     the two implementations interoperable.
   - Raise Kover's bound to 80 %.
-- [ ] **M1.7 `Backoff` and retry policy.**
+- [x] **M1.7 `Backoff` and retry policy.**
   - `Backoff(base = 2 s, factor = 2.0, cap = 1 h, jitter = FULL)` with
     `nextDelay(attempt, random)`.
   - `RetryPolicy.classify(TransportException)` gives RETRY_AFTER(ms), BACKOFF, PAUSE_DEST or
